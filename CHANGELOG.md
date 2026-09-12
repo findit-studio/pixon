@@ -12,6 +12,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
+## 0.6.0 — 2026-09-12
+
+**Breaking**, on one count: the public dependency `mediaframe` crosses
+0.10 → 0.11, replacing `SmolStr` with `smol_bytes::Utf8Bytes` as the one
+text carrier across every vocabulary pixon re-exports, and — a
+consequence of that carrier's own representation — narrowing where a
+value of those vocabularies may be dropped inside a `const` body. No
+pixon-authored API changes shape or behavior in this release.
+
+### Changed
+
+- **`mediaframe` 0.10 → 0.11.** One upstream major, entirely mediaframe's
+  own 0.11.0. Two changes, checked against mediaframe's own 0.11.0
+  CHANGELOG entry, not assumed:
+  - **Every text field under the twenty-two open vocabularies' `Other(...)`
+    escape now carries `smol_bytes::Utf8Bytes`; `SmolStr` is gone
+    crate-wide.** Breaking in two shapes upstream: code naming the escape
+    arm's payload type directly (`Type::Other(SmolStr::new(s))`, a
+    destructured `Other(s)` bound as `SmolStr`), and code handing a
+    `SmolStr` value to a text-setting method. Neither shape exists in
+    pixon — a census of `src/` and `examples/` finds zero `SmolStr`
+    mentions, zero direct `Type::Other(...)` construction, and zero match
+    arms that destructure `Other`'s payload at all. The one place this
+    crate builds a value through the escape arm is its own test suite —
+    43 call sites across five re-exported types (`ChromaLocation` × 32,
+    `DynamicRange` × 5, `Transfer` × 3, `ColorMatrix` × 2,
+    `DcpTargetGamut` × 1), every one an associated-function call
+    (`Type::other("slug")`) against a `&str` literal. `other()`'s
+    signature moved from `impl Into<SmolStr>` to `impl Into<Utf8Bytes>`;
+    both accept a string literal identically, so all 43 sites compile
+    unchanged. (`frame::{Rotation, FieldOrder, StereoMode}` gain the same
+    escape-arm carrier and ride along in the wholesale
+    `pub use mediaframe::frame` re-export, seeing no pixon code at all.)
+  - **A value of one of those twenty-two open vocabularies can no longer
+    be constructed and dropped inside a `const` body at the `alloc` /
+    `std` tier** (`rustc` E0493: `Utf8Bytes`'s heap arm holds a
+    `bytes::Bytes`, whose inline `AtomicPtr` makes the enclosing enum
+    non-`Freeze`, so a `const`-item temporary of it no longer promotes to
+    `'static`). Checked against mediaframe's own CHANGELOG note, not
+    assumed: a census of `src/` finds no `const` or `static` item typed
+    as one of these vocabularies, and no method chained directly off one
+    of their freshly-constructed variants — the shape the break
+    requires. Nothing in pixon's own source exercises it.
+  - Wire and text forms are unchanged for every roster value pixon's
+    public API carries; the vocabularies' `Display`, `FromStr` and
+    ignore-case parse tiers are untouched.
+
+  `cargo check -p pixon --all-targets --all-features` compiles clean
+  against `mediaframe 0.11.0` with zero repairs required on pixon's side.
+
 ## 0.5.0 — 2026-09-02
 
 **Breaking**, on one count: the public dependency `mediaframe` crosses

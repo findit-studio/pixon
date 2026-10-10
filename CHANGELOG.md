@@ -12,6 +12,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
+## 0.7.0 — 2026-10-10
+
+**Breaking**, on one count: the public dependency `mediaframe` crosses
+0.11 → 0.12, and with it the `mediatime` beneath it crosses 0.4 → 0.5.
+No pixon-authored API changes shape or behavior in this release.
+
+### Changed
+
+- **`mediaframe` 0.11 → 0.12.** One upstream major, entirely mediaframe's
+  own 0.12.0, whose source is 0.11.0's but for comments: the release is
+  its `mediatime` 0.4 → 0.5 pin. It is breaking here because mediaframe's
+  types are pixon's public API, so a caller holding a `mediaframe` 0.11
+  value no longer type-checks against this release. They are reached at:
+  - the crate root (`src/lib.rs`): `PixelSink`, `SourceFormat`,
+    `PixelFormat`, the `color` vocabulary (`ChromaLocation`,
+    `ColorInfo`, `ColorMatrix`, `DcpTargetGamut`, `DynamicRange`,
+    `KernelGamut`, `KernelMatrix`, `Primaries`, `Transfer`,
+    `UnsupportedKernelGamutError`, `UnsupportedKernelMatrixError`), and
+    the `frame` and `source` modules whole;
+  - `raw` (`src/raw/{mod,bayer,bayer16,pal8}.rs`): the Bayer frames,
+    rows, sinks and walkers with their demosaic, white-balance and
+    colour-correction types, and the PAL8 source, row, sink and walker;
+  - `sinker::mixed` (`src/sinker/mixed/mod.rs`): `WidthAlignment`,
+    `WidthAlignmentRequirement`, `HsvFrame`, `HsvFrameMut`, `HsvPlane`;
+  - pixon's own signatures over those types, such as
+    `ColorSpec::from_info(PixelFormat, ColorInfo)`.
+- **`mediatime` 0.4 → 0.5, one level down.** pixon names no `mediatime`
+  item itself. The one `mediatime` type its API reaches is `Timestamp`,
+  through the re-exported `frame::TimestampedFrame` (`pts`, `duration`
+  and their accessors and builders). `Timestamp` did not change; what
+  `mediatime` 0.5 removed (`TimeRange`'s unchecked `with_start` /
+  `with_end` / `set_start` / `set_end`, now checked moves) is not on that
+  path.
+
+The lock resolves one `mediaframe` (0.12.0) and one `mediatime` (0.5.1).
+No source line moved: every lane `ci.yml` runs that this host can run
+passes against `mediaframe` 0.12.0 with no repair on pixon's side —
+`cargo hack` clippy, build and test over the feature powerset (21 feature
+sets each), the fifteen cross targets, and both wasm32 simd128 lib-test
+shards under wasmtime.
+
 ## 0.6.0 — 2026-09-12
 
 **Breaking**, on one count: the public dependency `mediaframe` crosses

@@ -40,7 +40,7 @@
 //! 2. **Recover `X'Y'Z'`** by inverting the H.273 eq 76-78 forward relations
 //!    ([`recover_xyz_prime`]): `Y' = E'_Y`, then solve for `X'` and `Z'`.
 //! 3. **PQ EOTF** lifts the non-linear `X'Y'Z'` to linear `XYZ` per channel,
-//!    via the BT.2100 transfer math of [`crate::resample::pq_hlg`].
+//!    via the BT.2100 transfer math of [`crate::hdr`].
 //! 4. **[`M_XYZ_TO_RGB_REC2020`]** maps linear `XYZ → RGB` in the BT.2020
 //!    output gamut.
 //! 5. **PQ OETF** re-encodes linear `RGB → R'G'B'` per channel, yielding the
@@ -65,7 +65,7 @@
 //! scalar path for `ColorMatrix::Smpte2085`, regardless of the `use_simd`
 //! hint.
 
-use crate::{Transfer, resample::pq_hlg};
+use crate::{Transfer, hdr};
 
 use super::bits_mask;
 use crate::ColorMatrix;
@@ -231,9 +231,9 @@ fn recover_xyz_prime(norm: [f32; 3]) -> [f32; 3] {
 fn smpte2085_norm_to_rgb_linear(norm: [f32; 3]) -> [f32; 3] {
   let xyz_prime = recover_xyz_prime(norm);
   let xyz = [
-    pq_hlg::pq_eotf(xyz_prime[0]),
-    pq_hlg::pq_eotf(xyz_prime[1]),
-    pq_hlg::pq_eotf(xyz_prime[2]),
+    hdr::pq_eotf(xyz_prime[0]),
+    hdr::pq_eotf(xyz_prime[1]),
+    hdr::pq_eotf(xyz_prime[2]),
   ];
   matmul3(&M_XYZ_TO_RGB_REC2020, xyz)
 }
@@ -246,9 +246,9 @@ fn smpte2085_norm_to_rgb_linear(norm: [f32; 3]) -> [f32; 3] {
 pub(crate) fn smpte2085_norm_to_rgb_prime(norm: [f32; 3]) -> [f32; 3] {
   let lin = smpte2085_norm_to_rgb_linear(norm);
   [
-    pq_hlg::pq_oetf(lin[0]),
-    pq_hlg::pq_oetf(lin[1]),
-    pq_hlg::pq_oetf(lin[2]),
+    hdr::pq_inverse_eotf(lin[0]),
+    hdr::pq_inverse_eotf(lin[1]),
+    hdr::pq_inverse_eotf(lin[2]),
   ]
 }
 

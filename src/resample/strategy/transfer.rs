@@ -69,160 +69,6 @@ fn powf32(x: f32, y: f32) -> f32 {
   }
 }
 
-/// Verified ITU-R BT.2100 PQ / HLG per-channel inverse-EOTF / OETF math.
-///
-/// These are the net-new, reference-critical transfer stage of the BT.2100
-/// non-affine colour decode (ICtCp — H.273 `MatrixCoefficients = 14` — and
-/// SMPTE 2085): a source decodes `I,Ct,Cp → L'M'S'` (inverse ICtCp matrix)
-/// `→ LMS` via the inverse-EOTF here `→ RGB` (LMS→RGB, BT.2020 primaries).
-/// The math is kept here, private, until the deferred ICtCp matrix-wiring
-/// (#303) routes a `ColorMatrix::Ictcp` source through it; it is
-/// intentionally **not** placed on the public [`TransferFunction`] enum,
-/// which is the RFC #238 *linear-light averaging* abstraction — a different
-/// consumer — and which is `pub` without `#[non_exhaustive]` (adding
-/// variants there would be a breaking change for downstream exhaustive
-/// matches).
-///
-/// All constants are the published values of ITU-R BT.2100-2 (Tables 4 / 5)
-/// and SMPTE ST 2084:2014, cross-checked against the `colour-science`
-/// Python library; the reference-anchor tests in `tests.rs`
-/// (`transfer_function_pq_matches_st2084_reference` /
-/// `transfer_function_hlg_matches_bt2100_reference`) pin every constant.
-// Consumed by the ICtCp non-affine decode (`row::scalar::ictcp`, #303) via
-// the `crate::resample::pq_hlg` re-export; dead only in feature configs that
-// build neither `yuv-planar` nor the transcendental tier it needs.
-#[allow(dead_code)]
-pub(crate) mod pq_hlg {
-  use super::powf32;
-
-  /// `f32` natural logarithm portable across `std` and `no_std + alloc`
-  /// builds (companion of [`super::powf32`] for the HLG log segment).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  fn lnf32(x: f32) -> f32 {
-    #[cfg(feature = "std")]
-    {
-      f32::ln(x)
-    }
-    #[cfg(all(not(feature = "std"), feature = "alloc"))]
-    {
-      libm::logf(x)
-    }
-  }
-
-  /// `f32` `exp` portable across `std` and `no_std + alloc` builds (for the
-  /// HLG inverse-OETF log segment).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  fn expf32(x: f32) -> f32 {
-    #[cfg(feature = "std")]
-    {
-      f32::exp(x)
-    }
-    #[cfg(all(not(feature = "std"), feature = "alloc"))]
-    {
-      libm::expf(x)
-    }
-  }
-
-  /// `f32` square root portable across `std` and `no_std + alloc` builds.
-  /// `f32::sqrt` is a `std`-only intrinsic, so `no_std` routes through
-  /// `libm::sqrtf` (HLG OETF lower / gamma segment).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  fn sqrtf32(x: f32) -> f32 {
-    #[cfg(feature = "std")]
-    {
-      f32::sqrt(x)
-    }
-    #[cfg(all(not(feature = "std"), feature = "alloc"))]
-    {
-      libm::sqrtf(x)
-    }
-  }
-
-  /// PQ exponent `m1 = 2610 / 16384` (BT.2100 Table 4) = `0.159301758`.
-  const PQ_M1: f32 = 2610.0 / 16384.0;
-  /// PQ exponent `m2 = 2523 / 4096 × 128` (BT.2100 Table 4) = `78.84375`.
-  const PQ_M2: f32 = 2523.0 / 4096.0 * 128.0;
-  /// PQ coefficient `c1 = 3424 / 4096` (BT.2100 Table 4) = `0.8359375`;
-  /// equals `c3 − c2 + 1`, so PQ maps signal `1.0` to linear `1.0`.
-  const PQ_C1: f32 = 3424.0 / 4096.0;
-  /// PQ coefficient `c2 = 2413 / 4096 × 32` (BT.2100 Table 4) = `18.8515625`.
-  const PQ_C2: f32 = 2413.0 / 4096.0 * 32.0;
-  /// PQ coefficient `c3 = 2392 / 4096 × 32` (BT.2100 Table 4) = `18.6875`.
-  const PQ_C3: f32 = 2392.0 / 4096.0 * 32.0;
-
-  /// HLG coefficient `a = 0.17883277` (BT.2100 Table 5 / ARIB STD-B67).
-  const HLG_A: f32 = 0.178_832_77;
-  /// HLG coefficient `b = 1 − 4a = 0.28466892` (BT.2100 Table 5).
-  const HLG_B: f32 = 0.284_668_92;
-  /// HLG coefficient `c = 0.5 − a·ln(4a) = 0.55991073` (BT.2100 Table 5);
-  /// the literal is the f32-nearest value (the trailing digit is below f32
-  /// precision).
-  const HLG_C: f32 = 0.559_910_7;
-
-  /// SMPTE ST 2084 / BT.2100 PQ EOTF: signal `E'` → display-linear `Y`
-  /// normalised so `1.0` = 10 000 cd/m².
-  ///   `Y = (max(E'^(1/m2) − c1, 0) / (c2 − c3·E'^(1/m2)))^(1/m1)`.
-  /// The negative side is mirrored through the origin (odd extension).
-  /// PQ signal `E'` is defined on `[0, 1]` (`1.0` = the 10 000 cd/m² peak),
-  /// so the magnitude is clamped to `1.0`: a super-white input saturates at
-  /// the peak — a defined, monotonic policy — rather than crossing the
-  /// `den = c2 − c3·vp = 0` pole at `|c| ≈ 1.99` (which overflows toward
-  /// `+inf` just below it, and folds to black via the trailing `.max(0.0)`
-  /// just above it where `num / den` goes negative).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn pq_eotf(c: f32) -> f32 {
-    let vp = powf32(c.abs().min(1.0), 1.0 / PQ_M2);
-    let num = (vp - PQ_C1).max(0.0);
-    let den = PQ_C2 - PQ_C3 * vp;
-    c.signum() * powf32((num / den).max(0.0), 1.0 / PQ_M1)
-  }
-
-  /// SMPTE ST 2084 / BT.2100 PQ inverse-EOTF: display-linear `Y`
-  /// (normalised, `1.0` = 10 000 cd/m²) → signal `E'`.
-  ///   `E' = ((c1 + c2·Y^m1) / (1 + c3·Y^m1))^m2`.
-  /// For `Y ≥ 0` the base is in `(0, c2/c3) ⊂ (0, 2)`, so the power needs
-  /// no NaN guard; the negative side is mirrored through the origin.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn pq_oetf(c: f32) -> f32 {
-    let yp = powf32(c.abs(), PQ_M1);
-    c.signum() * powf32((PQ_C1 + PQ_C2 * yp) / (1.0 + PQ_C3 * yp), PQ_M2)
-  }
-
-  /// BT.2100 / ARIB STD-B67 HLG inverse-OETF: signal `E'` → scene-linear
-  /// `E` (per-channel scene light, **not** the full display EOTF whose OOTF
-  /// system-gamma is luminance-dependent across channels).
-  ///   `E = E'^2 / 3`                      for `|E'| ≤ 1/2`
-  ///   `E = (exp((E' − c) / a) + b) / 12`  for `|E'| > 1/2`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn hlg_eotf(c: f32) -> f32 {
-    // HLG signal `E'` is defined on `[0, 1]`; clamp the magnitude so a
-    // super-white input saturates at the peak (the log segment otherwise
-    // grows unbounded for `E' > 1`), matching `pq_eotf`'s defined domain.
-    let a = c.abs().min(1.0);
-    let e = if a <= 0.5 {
-      a * a / 3.0
-    } else {
-      (expf32((a - HLG_C) / HLG_A) + HLG_B) / 12.0
-    };
-    c.signum() * e
-  }
-
-  /// BT.2100 / ARIB STD-B67 HLG OETF: scene-linear `E` → signal `E'` (the
-  /// per-channel inverse of [`hlg_eotf`]).
-  ///   `E' = sqrt(3·E)`             for `|E| ≤ 1/12`
-  ///   `E' = a·ln(12·E − b) + c`    for `|E| > 1/12`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn hlg_oetf(c: f32) -> f32 {
-    let e = c.abs();
-    let v = if e <= 1.0 / 12.0 {
-      sqrtf32(3.0 * e)
-    } else {
-      HLG_A * lnf32(12.0 * e - HLG_B) + HLG_C
-    };
-    c.signum() * v
-  }
-}
-
 /// Verified ITU-R BT.2020 opto-electronic transfer (the SDR "camera" gamma,
 /// H.273 `TransferCharacteristics ∈ {1, 14, 15}`) and its analytic inverse.
 ///
@@ -232,11 +78,11 @@ pub(crate) mod pq_hlg {
 /// CL system, unlike every non-constant-luminance (affine) matrix, derives its
 /// luma from **linear** light and bends the chroma normalisers through *this*
 /// curve, so the decode genuinely needs the BT.2020 OETF in the pixel loop
-/// (`row::scalar::cl`). It is kept here, private, beside the [`pq_hlg`] BT.2100
-/// math the ICtCp decode uses — both are the non-affine transfer foundation,
-/// deliberately **not** on the public [`TransferFunction`] enum (that is the
-/// RFC #238 linear-light averaging abstraction, a different consumer, and is
-/// `pub` without `#[non_exhaustive]`).
+/// (`row::scalar::cl`). It is kept here, private — the BT.2100 PQ / HLG curves
+/// the ICtCp decode uses are public in [`crate::hdr`] — and deliberately
+/// **not** on the public [`TransferFunction`] enum (that is the RFC #238
+/// linear-light averaging abstraction, a different consumer, and is `pub`
+/// without `#[non_exhaustive]`).
 ///
 /// All constants are the published values of ITU-R BT.2020-2 (Table 4),
 /// cross-checked against the `colour-science` `oetf_BT2020` /

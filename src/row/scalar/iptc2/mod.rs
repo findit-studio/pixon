@@ -30,7 +30,7 @@
 //!    IPT-C2 has a single rotation (no PQ/HLG split): the decode is defined
 //!    only for the SMPTE ST 2084 PQ transfer.
 //! 3. **PQ EOTF** lifts the non-linear `L'M'S'` to linear `LMS` per channel,
-//!    via the BT.2100 transfer math of [`crate::resample::pq_hlg`].
+//!    via the BT.2100 transfer math of [`crate::hdr`].
 //! 4. **[`IPTC2_LMS_TO_RGB`]** (the inverse of IPT-C2's own `RGB→LMS`
 //!    crosstalk matrix) maps linear `LMS → RGB`.
 //! 5. **PQ OETF** re-encodes linear `RGB → R'G'B'` per channel, yielding the
@@ -55,7 +55,7 @@
 //! lane parallelism win. Routing therefore always takes the scalar path for
 //! `ColorMatrix::IptC2`, regardless of the `use_simd` hint.
 
-use crate::{Transfer, resample::pq_hlg};
+use crate::{Transfer, hdr};
 
 use super::bits_mask;
 use crate::ColorMatrix;
@@ -186,9 +186,9 @@ fn dequant_iptc2<const BITS: u32>(i: u16, p: u16, t: u16, full_range: bool) -> [
 fn iptc2_norm_to_rgb_linear(norm: [f32; 3]) -> [f32; 3] {
   let lms_p = matmul3(&IPTC2_IPT_TO_LMSP, norm);
   let lms = [
-    pq_hlg::pq_eotf(lms_p[0]),
-    pq_hlg::pq_eotf(lms_p[1]),
-    pq_hlg::pq_eotf(lms_p[2]),
+    hdr::pq_eotf(lms_p[0]),
+    hdr::pq_eotf(lms_p[1]),
+    hdr::pq_eotf(lms_p[2]),
   ];
   matmul3(&IPTC2_LMS_TO_RGB, lms)
 }
@@ -200,9 +200,9 @@ fn iptc2_norm_to_rgb_linear(norm: [f32; 3]) -> [f32; 3] {
 pub(crate) fn iptc2_norm_to_rgb_prime(norm: [f32; 3]) -> [f32; 3] {
   let lin = iptc2_norm_to_rgb_linear(norm);
   [
-    pq_hlg::pq_oetf(lin[0]),
-    pq_hlg::pq_oetf(lin[1]),
-    pq_hlg::pq_oetf(lin[2]),
+    hdr::pq_inverse_eotf(lin[0]),
+    hdr::pq_inverse_eotf(lin[1]),
+    hdr::pq_inverse_eotf(lin[2]),
   ]
 }
 

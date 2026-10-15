@@ -12,6 +12,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
+## 0.7.1 — unreleased
+
+Additive: a public, analysis-grade HDR → SDR tier, and the BT.2100 curves it
+is built from. No existing API changes shape or behavior.
+
+### Added
+
+- **`hdr`: the BT.2100 transfer curves, public.** `pq_eotf` and
+  `pq_inverse_eotf` (SMPTE ST 2084), `hlg_oetf` and `hlg_inverse_oetf`
+  (ARIB STD-B67), `hlg_system_gamma` and `hlg_ootf`. These are the verified
+  curves the ICtCp, IPT-C2 and SMPTE ST 2085 decodes already used (#313,
+  #324), moved out of the crate-private `resample::pq_hlg` under BT.2100's own
+  names. The private names followed the decode and encode direction, so
+  `pq_oetf` was the PQ inverse EOTF and `hlg_eotf` the HLG inverse OETF. No
+  value changed, and the reference-anchor tests moved with the curves.
+- **`hdr::SdrMapping`: one documented mapping from PQ or HLG `R'G'B'` to
+  BT.709 SDR `R'G'B'`**, for a consumer that reads ordinary display values,
+  such as scene detection, image embeddings or keyframe images. It is not a
+  renderer's tone mapper, and the module note says so. The steps:
+  1. Linearise to display light. PQ is absolute; HLG goes through its OOTF at
+     a nominal peak of 1000 cd/m² (system gamma 1.2).
+  2. Normalise by HDR reference white, 203 cd/m² (BT.2408).
+  3. Convert the declared gamut to BT.709 by the matrix derived from its
+     chromaticities. From BT.2020 this is BT.2087's matrix, and an
+     unspecified gamut reads as BT.2020.
+  4. Apply a fixed per-channel knee at 0.75 of SDR white.
+  5. Encode with the inverse of the BT.1886 EOTF (gamma 2.4).
+
+  BT.2408's reference white lands at 0.961 and its 18% grey at 0.425. There
+  are three faces: `map_signal`, `map_rgb8` (in place, over the `Convert`
+  tier's 8-bit RGB) and `map_rgb16` (from the native-depth RGB that
+  `MixedSinker::with_rgb_u16` writes). Every non-HDR transfer builds a
+  passthrough that leaves pixels unchanged. A PQ or HLG picture over a gamut
+  without a D65 white or without defined primaries is refused by name
+  (`UnsupportedPrimaries`).
+
 ## 0.7.0 — 2026-10-10
 
 **Breaking**, on one count: the public dependency `mediaframe` crosses

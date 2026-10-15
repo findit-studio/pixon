@@ -162,15 +162,15 @@ fn dequant_matches_h273_convention() {
 /// `→ IPT` (eq 85-87). The exact inverse of the kernel's decode.
 fn encode_ipt_norm(rgb_prime: [f32; 3]) -> [f32; 3] {
   let lin = [
-    crate::resample::pq_hlg::pq_eotf(rgb_prime[0]),
-    crate::resample::pq_hlg::pq_eotf(rgb_prime[1]),
-    crate::resample::pq_hlg::pq_eotf(rgb_prime[2]),
+    crate::hdr::pq_eotf(rgb_prime[0]),
+    crate::hdr::pq_eotf(rgb_prime[1]),
+    crate::hdr::pq_eotf(rgb_prime[2]),
   ];
   let lms = matmul3(&RGB_TO_LMS, lin);
   let lms_p = [
-    crate::resample::pq_hlg::pq_oetf(lms[0]),
-    crate::resample::pq_hlg::pq_oetf(lms[1]),
-    crate::resample::pq_hlg::pq_oetf(lms[2]),
+    crate::hdr::pq_inverse_eotf(lms[0]),
+    crate::hdr::pq_inverse_eotf(lms[1]),
+    crate::hdr::pq_inverse_eotf(lms[2]),
   ];
   matmul3(&LMSP_TO_IPT, lms_p)
 }

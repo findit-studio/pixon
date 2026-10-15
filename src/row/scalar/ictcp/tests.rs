@@ -9,7 +9,7 @@
 //! `cd/m²` with `L_p = 10000`, so `pixon linear RGB = colour / 10000`; HLG
 //! has no `L_p` (scene-linear `[0, 1]`), so they coincide directly. This is
 //! the same `÷10000` relationship the #313 transfer tests already establish
-//! (`pq_oetf(0.01)` = `colour eotf_inverse_ST2084(100)`).
+//! (`pq_inverse_eotf(0.01)` = `colour eotf_inverse_ST2084(100)`).
 
 use super::*;
 

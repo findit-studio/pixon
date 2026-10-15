@@ -12,7 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
-## 0.7.1 — unreleased
+## 0.7.1 — 2026-10-15
 
 Additive: a public, analysis-grade HDR → SDR tier, and the BT.2100 curves it
 is built from. No existing API changes shape or behavior.

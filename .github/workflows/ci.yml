@@ -297,6 +297,18 @@ jobs:
           # or env access — the tests are pure compute.
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime run --
           RUSTFLAGS: -C target-feature=+simd128
+          # The YUV shard's lib-test compile is the largest single rustc in
+          # this workflow — every YUV family's generated sinkers for wasm32
+          # with simd128 — and since 0.7.0 the hosted runner was shut down
+          # (exit 143) about two minutes into it on every run, the same
+          # reclamation the sanitizer shards below are sized against. No
+          # debuginfo (nothing here reads a wasm backtrace), no incremental
+          # state, and two codegen jobs keep that compile's footprint small;
+          # the tests and the feature shards are unchanged.
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+          CARGO_INCREMENTAL: "0"
+          CARGO_BUILD_JOBS: "2"
         run: cargo test --lib --target wasm32-wasip1 --no-default-features --features "std ${{ matrix.feature-group }}"
 
   # ASan + LSan instrument only the crate (no `-Zbuild-std`), so — unlike

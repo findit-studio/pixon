@@ -455,11 +455,37 @@ fn the_declared_gamut_is_converted_to_bt709() {
       // Miri's float-intrinsic noise: the two mappings are separate chains of intrinsic calls.
       assert!(close(a[channel], b[channel], 1e-5), "grey: {a:?} vs {b:?}");
     }
-    assert_eq!(
-      SdrMapping::for_picture(&transfer, &Primaries::Unspecified).expect("unspecified"),
-      wide,
-      "an unspecified gamut is BT.2020",
-    );
+    let unstated =
+      SdrMapping::for_picture(&transfer, &Primaries::Unspecified).expect("unspecified");
+    if cfg!(miri) {
+      // Miri's float-intrinsic noise: each construction builds its 8-bit table through its own
+      // `powf`/`exp` calls, so two equal mappings agree there only within `close`.
+      assert_eq!(unstated.transfer(), wide.transfer());
+      let (a, b) = (
+        unstated.hdr.as_ref().expect("maps"),
+        wide.hdr.as_ref().expect("maps"),
+      );
+      for (x, y) in a.to_bt709.iter().flatten().zip(b.to_bt709.iter().flatten()) {
+        assert!(
+          close(*x, *y, 0.0),
+          "an unspecified gamut is BT.2020: {x} vs {y}"
+        );
+      }
+      for (x, y) in a.luminance.iter().zip(&b.luminance) {
+        assert!(close(*x, *y, 0.0), "and so is its luminance: {x} vs {y}");
+      }
+      for probe in [[0.1, 0.4, 0.9], [0.5; 3], [0.75, 0.2, 0.3], [1.0, 1.0, 0.0]] {
+        let (x, y) = (unstated.map_signal(probe), wide.map_signal(probe));
+        for channel in 0..3 {
+          assert!(
+            close(x[channel], y[channel], 0.0),
+            "{probe:?}: {x:?} vs {y:?}"
+          );
+        }
+      }
+    } else {
+      assert_eq!(unstated, wide, "an unspecified gamut is BT.2020");
+    }
     let identity = narrow.hdr.as_ref().expect("maps").to_bt709;
     for (row, line) in identity.iter().enumerate() {
       for (column, value) in line.iter().enumerate() {

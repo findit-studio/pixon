@@ -382,9 +382,12 @@ pub(super) fn knee(light: f32) -> f32 {
 }
 
 /// SDR display light to signal: the inverse of the BT.1886 EOTF.
+///
+/// The result is held to `1.0` as well as the input: a `powf` that answers a few ULP high (Miri's
+/// float-intrinsic noise does) must not carry a signal past full scale.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn encode(light: f32) -> f32 {
-  powf32(light.min(1.0), 1.0 / SDR_DISPLAY_GAMMA)
+  powf32(light.min(1.0), 1.0 / SDR_DISPLAY_GAMMA).min(1.0)
 }
 
 /// A signal clamped to `[0, 1]`, a NaN read as `0`.

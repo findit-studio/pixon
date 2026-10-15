@@ -41,6 +41,27 @@ fn code(signal: f32) -> u8 {
 /// Every HDR transfer, as the vocabulary spells it.
 const HDR: [Transfer; 2] = [Transfer::SmpteSt2084Pq, Transfer::AribStdB67Hlg];
 
+/// Whether two computations of one value agree: within `native` on real hardware, and within a
+/// relative 1e-3 under Miri, which adds a few ULP of noise to every float intrinsic call (`powf`,
+/// `exp`, `ln`) and so lets the PQ chain's `(vp − c1)` and `1/m1` power amplify it.
+fn close(a: f32, b: f32, native: f32) -> bool {
+  if cfg!(miri) {
+    (a - b).abs() <= 1e-3 * a.abs().max(b.abs())
+  } else {
+    (a - b).abs() <= native
+  }
+}
+
+/// Whether two computations of one pixel quantise alike: equal on real hardware, and at most one
+/// code apart under Miri, whose float-intrinsic noise can move a value across a rounding boundary.
+fn same_codes(a: [u8; 3], b: [u8; 3]) -> bool {
+  if cfg!(miri) {
+    a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 1)
+  } else {
+    a == b
+  }
+}
+
 // ---- the BT.2100 curves ---------------------------------------------------
 
 #[test]
@@ -364,9 +385,12 @@ fn a_pq_and_an_hlg_ramp_map_into_sdr_with_the_stated_knee() {
           (0.0..=1.0).contains(&channel),
           "{transfer:?} {signal}: {out:?}"
         );
-        assert!((channel - out[1]).abs() <= 1e-5, "grey stays grey: {out:?}");
+        // Miri's float-intrinsic noise: each channel is its own chain of `powf` and `exp` calls.
+        assert!(close(channel, out[1], 1e-5), "grey stays grey: {out:?}");
       }
-      assert!(out[1] + 1e-6 >= previous, "{transfer:?} rising at {signal}");
+      // Miri's float-intrinsic noise can outweigh a step's rise where the knee is nearly flat.
+      let dip = if cfg!(miri) { 1e-3 * previous } else { 1e-6 };
+      assert!(out[1] + dip >= previous, "{transfer:?} rising at {signal}");
       previous = out[1];
 
       let light = match transfer {
@@ -375,8 +399,10 @@ fn a_pq_and_an_hlg_ramp_map_into_sdr_with_the_stated_knee() {
       };
       let shown = powf32(out[1], 2.4);
       let want = stated_knee(light);
+      // Miri's float-intrinsic noise reaches both sides of this comparison, each through `powf`.
+      let slack = if cfg!(miri) { 1e-3 } else { 2e-4 };
       assert!(
-        (shown - want).abs() <= 2e-4 + 2e-4 * want,
+        (shown - want).abs() <= 2e-4 + slack * want,
         "{transfer:?} {signal}: shown {shown} want {want} from light {light}",
       );
       if light > STATED_KNEE {
@@ -426,10 +452,8 @@ fn the_declared_gamut_is_converted_to_bt709() {
     let grey = [0.5; 3];
     let (a, b) = (wide.map_signal(grey), narrow.map_signal(grey));
     for channel in 0..3 {
-      assert!(
-        (a[channel] - b[channel]).abs() <= 1e-5,
-        "grey: {a:?} vs {b:?}"
-      );
+      // Miri's float-intrinsic noise: the two mappings are separate chains of intrinsic calls.
+      assert!(close(a[channel], b[channel], 1e-5), "grey: {a:?} vs {b:?}");
     }
     assert_eq!(
       SdrMapping::for_picture(&transfer, &Primaries::Unspecified).expect("unspecified"),
@@ -547,7 +571,11 @@ fn the_8_bit_face_is_the_signal_face_quantised() {
           let want = mapping
             .map_signal(pixel.map(|c| c as f32 / 255.0))
             .map(code);
-          assert_eq!(mapped, want, "{transfer:?} over {primaries:?}: {pixel:?}");
+          // Miri's float-intrinsic noise: the face's table and the signal face are separate calls.
+          assert!(
+            same_codes(mapped, want),
+            "{transfer:?} over {primaries:?}: {pixel:?} gave {mapped:?}, want {want:?}"
+          );
         }
       }
       let mut partial = [200u8, 100, 50, 25];
@@ -569,13 +597,21 @@ fn the_16_bit_face_maps_at_its_native_depth() {
     let want = mapping
       .map_signal([0, 1, 2].map(|i| f32::from(pixel[i]) / 1023.0))
       .map(code);
-    assert_eq!(*mapped, want, "{pixel:?}");
+    // Miri's float-intrinsic noise: the face and the test call the mapping separately.
+    assert!(
+      same_codes(*mapped, want),
+      "{pixel:?} gave {mapped:?}, want {want:?}"
+    );
   }
 
   let (mut over, mut full) = ([0u8; 3], [0u8; 3]);
   mapping.map_rgb16(&[2000; 3], 10, &mut over).expect("whole");
   mapping.map_rgb16(&[1023; 3], 10, &mut full).expect("whole");
-  assert_eq!(over, full, "above full scale reads as full scale");
+  // Miri's float-intrinsic noise: two calls over the same full-scale signal.
+  assert!(
+    same_codes(over, full),
+    "above full scale reads as full scale"
+  );
 
   assert_eq!(
     mapping.map_rgb16(&rgb, 0, &mut out),

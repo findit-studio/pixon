@@ -62,19 +62,10 @@ mod strategy;
 /// Crate-internal re-export of the verified ITU-R BT.2020 OETF / inverse-OETF
 /// math (the SDR camera gamma). The constant-luminance non-affine decode
 /// ([`crate::row::scalar::cl`], H.273 `MatrixCoefficients = 13`, #303) reaches
-/// its transfer stage through here. Gated identically to [`pq_hlg`] — its sole
-/// consumer (the `cl` module, `all(yuv-planar, any(std, alloc))`).
+/// its transfer stage through here. Gated on `yuv-planar` — its sole consumer
+/// (the `cl` module, `all(yuv-planar, any(std, alloc))`).
 #[cfg(feature = "yuv-planar")]
 pub(crate) use strategy::transfer::bt2020_oetf;
-/// Crate-internal re-export of the verified BT.2100 PQ / HLG inverse-EOTF /
-/// OETF math (the #313 foundation, parked in [`strategy::transfer`] until a
-/// consumer landed). The ICtCp non-affine decode
-/// ([`crate::row::scalar::ictcp`], H.273 `MatrixCoefficients = 14`, #303)
-/// reaches the transfer stage through here. Gated on `yuv-planar` — its sole
-/// consumer (the `ictcp` module, itself `all(yuv-planar, any(std, alloc))`);
-/// `resample` already carries the `any(std, alloc)` gate.
-#[cfg(feature = "yuv-planar")]
-pub(crate) use strategy::transfer::pq_hlg;
 pub use strategy::{AveragingDomain, FilterSpec, LinearMode, ResampleStrategy, TransferFunction};
 // Phase-0-internal: the splice-stage selector consumed by the per-format
 // route dispatch. `InsertionPoint` / its context stay crate-private until

@@ -67,6 +67,14 @@
 //! As of 0.2 the per-row SIMD kernels (`row::*`) are crate-internal plumbing
 //! consumed by the sinker and walkers — they are no longer public API.
 //!
+//! # HDR → SDR for analysis: [`hdr`]
+//!
+//! Both tiers are transfer-preserving, so a PQ or HLG picture decodes to
+//! `R'G'B'` that still holds HDR codes. [`hdr::SdrMapping`] maps those codes
+//! to BT.709 SDR `R'G'B'` for a consumer that reads ordinary display values.
+//! It is one documented, analysis-grade mapping, not a renderer's tone mapper.
+//! The module also publishes the BT.2100 curves the mapping is built from.
+//!
 //! # Supported source formats
 //!
 //! Shipped (4:1:0, 4:1:1, 4:2:0, 4:2:2, 4:4:0, and 4:4:4 subsampling, plus
@@ -529,6 +537,10 @@ pub use mediaframe::{
 // sinker's `any(std, alloc)` gate.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub mod convert;
+// The BT.2100 curves need `powf` / `exp` / `ln`, which come from `std` or,
+// on a `no_std + alloc` build, from `libm` — the gate `resample` rides too.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub mod hdr;
 pub mod raw;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub mod resample;

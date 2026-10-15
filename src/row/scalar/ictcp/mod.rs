@@ -30,7 +30,7 @@
 //!    trap), selected by [`IctcpTransfer`].
 //! 3. **EOTF** lifts the non-linear `L'M'S'` to linear `LMS` per channel —
 //!    PQ (SMPTE ST 2084) or HLG (ARIB STD-B67) — via the BT.2100 transfer
-//!    math of [`crate::resample::pq_hlg`] (the verified #313 foundation).
+//!    math of [`crate::hdr`] (the verified #313 foundation).
 //! 4. **`M_LMS→RGB`** (the inverse of the BT.2020 `RGB→LMS` crosstalk
 //!    matrix) maps linear `LMS → RGB`.
 //! 5. **OETF** re-encodes linear `RGB → R'G'B'` per channel (PQ or HLG),
@@ -55,7 +55,7 @@
 //! parallelism win. Routing therefore always takes the scalar path for
 //! `ColorMatrix::Ictcp`, regardless of the `use_simd` hint.
 
-use crate::{Transfer, resample::pq_hlg};
+use crate::{Transfer, hdr};
 
 use super::bits_mask;
 use crate::ColorMatrix;
@@ -212,14 +212,14 @@ fn ictcp_norm_to_rgb_linear(norm: [f32; 3], transfer: IctcpTransfer) -> [f32; 3]
   };
   let lms = match transfer {
     IctcpTransfer::Pq => [
-      pq_hlg::pq_eotf(lms_p[0]),
-      pq_hlg::pq_eotf(lms_p[1]),
-      pq_hlg::pq_eotf(lms_p[2]),
+      hdr::pq_eotf(lms_p[0]),
+      hdr::pq_eotf(lms_p[1]),
+      hdr::pq_eotf(lms_p[2]),
     ],
     IctcpTransfer::Hlg => [
-      pq_hlg::hlg_eotf(lms_p[0]),
-      pq_hlg::hlg_eotf(lms_p[1]),
-      pq_hlg::hlg_eotf(lms_p[2]),
+      hdr::hlg_inverse_oetf(lms_p[0]),
+      hdr::hlg_inverse_oetf(lms_p[1]),
+      hdr::hlg_inverse_oetf(lms_p[2]),
     ],
   };
   matmul3(&LMS_TO_RGB, lms)
@@ -234,14 +234,14 @@ pub(crate) fn ictcp_norm_to_rgb_prime(norm: [f32; 3], transfer: IctcpTransfer) -
   let lin = ictcp_norm_to_rgb_linear(norm, transfer);
   match transfer {
     IctcpTransfer::Pq => [
-      pq_hlg::pq_oetf(lin[0]),
-      pq_hlg::pq_oetf(lin[1]),
-      pq_hlg::pq_oetf(lin[2]),
+      hdr::pq_inverse_eotf(lin[0]),
+      hdr::pq_inverse_eotf(lin[1]),
+      hdr::pq_inverse_eotf(lin[2]),
     ],
     IctcpTransfer::Hlg => [
-      pq_hlg::hlg_oetf(lin[0]),
-      pq_hlg::hlg_oetf(lin[1]),
-      pq_hlg::hlg_oetf(lin[2]),
+      hdr::hlg_oetf(lin[0]),
+      hdr::hlg_oetf(lin[1]),
+      hdr::hlg_oetf(lin[2]),
     ],
   }
 }

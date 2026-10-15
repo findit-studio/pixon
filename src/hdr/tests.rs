@@ -565,11 +565,11 @@ fn the_16_bit_face_maps_at_its_native_depth() {
   let rgb: [u16; 6] = [0, 600, 1023, 512, 512, 512];
   let mut out = [0u8; 6];
   mapping.map_rgb16(&rgb, 10, &mut out).expect("whole pixels");
-  for (pixel, mapped) in rgb.chunks_exact(3).zip(out.chunks_exact(3)) {
+  for (pixel, mapped) in rgb.as_chunks::<3>().0.iter().zip(out.as_chunks::<3>().0) {
     let want = mapping
       .map_signal([0, 1, 2].map(|i| f32::from(pixel[i]) / 1023.0))
       .map(code);
-    assert_eq!(mapped, want, "{pixel:?}");
+    assert_eq!(*mapped, want, "{pixel:?}");
   }
 
   let (mut over, mut full) = ([0u8; 3], [0u8; 3]);

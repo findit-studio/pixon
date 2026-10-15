@@ -263,7 +263,7 @@ impl SdrMapping {
     let Some(hdr) = &self.hdr else {
       return;
     };
-    for pixel in rgb.chunks_exact_mut(3) {
+    for pixel in rgb.as_chunks_mut::<3>().0 {
       let linear = [
         hdr.table[pixel[0] as usize],
         hdr.table[pixel[1] as usize],
@@ -305,7 +305,12 @@ impl SdrMapping {
     }
     let full = ((1u32 << bits) - 1) as f32;
     let signal = |code: u16| (code as f32 / full).min(1.0);
-    for (pixel, sdr) in rgb.chunks_exact(3).zip(out.chunks_exact_mut(3)) {
+    for (pixel, sdr) in rgb
+      .as_chunks::<3>()
+      .0
+      .iter()
+      .zip(out.as_chunks_mut::<3>().0)
+    {
       let mapped = self.map_signal([signal(pixel[0]), signal(pixel[1]), signal(pixel[2])]);
       sdr[0] = quantize(mapped[0]);
       sdr[1] = quantize(mapped[1]);

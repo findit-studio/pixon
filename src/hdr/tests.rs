@@ -41,25 +41,50 @@ fn code(signal: f32) -> u8 {
 /// Every HDR transfer, as the vocabulary spells it.
 const HDR: [Transfer; 2] = [Transfer::SmpteSt2084Pq, Transfer::AribStdB67Hlg];
 
-/// Whether two computations of one value agree: within `native` on real hardware, and within a
-/// relative 1e-3 under Miri, which adds a few ULP of noise to every float intrinsic call (`powf`,
-/// `exp`, `ln`) and so lets the PQ chain's `(vp − c1)` and `1/m1` power amplify it.
-fn close(a: f32, b: f32, native: f32) -> bool {
+/// The relative slack every float law in this file takes under Miri.
+///
+/// Miri adds a few ULP of noise to every float intrinsic call (`powf`, `exp`, `ln`, `log10`), and
+/// the PQ chain's `(vp − c1)` and `1/m1` power amplify it: CI has seen 1.15e-3 relative on a
+/// `map_signal` probe. One hundredth is that with a wide margin, and it is still a law: a wrong
+/// constant or a wrong curve moves these values by far more.
+const MIRI_RELATIVE: f32 = 1e-2;
+
+/// THE ONE HELPER: the slack two computed values `a` and `b` get — none on real hardware, and
+/// [`MIRI_RELATIVE`] of the larger magnitude under Miri. Every comparison below reads it, so a law
+/// never carries a Miri tolerance of its own.
+fn miri_slack(a: f32, b: f32) -> f32 {
   if cfg!(miri) {
-    (a - b).abs() <= 1e-3 * a.abs().max(b.abs())
+    MIRI_RELATIVE * a.abs().max(b.abs())
   } else {
-    (a - b).abs() <= native
+    0.0
   }
 }
 
-/// Whether two computations of one pixel quantise alike: equal on real hardware, and at most one
-/// code apart under Miri, whose float-intrinsic noise can move a value across a rounding boundary.
+/// Whether two computations of one value agree: within `native` on real hardware, and within the
+/// larger of `native` and [`miri_slack`] under Miri.
+fn near(a: f32, b: f32, native: f32) -> bool {
+  (a - b).abs() <= native.max(miri_slack(a, b))
+}
+
+/// `a < b`, with [`miri_slack`] under Miri.
+fn below(a: f32, b: f32) -> bool {
+  a < b + miri_slack(a, b)
+}
+
+/// `a <= b`, with [`miri_slack`] under Miri.
+fn at_most(a: f32, b: f32) -> bool {
+  a <= b + miri_slack(a, b)
+}
+
+/// Whether two computations of one pixel quantise alike: equal on real hardware; under Miri as far
+/// apart as [`MIRI_RELATIVE`] of full scale can move a code, plus one for a rounding boundary.
 fn same_codes(a: [u8; 3], b: [u8; 3]) -> bool {
-  if cfg!(miri) {
-    a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 1)
+  let codes = if cfg!(miri) {
+    1 + (MIRI_RELATIVE * 255.0) as u8
   } else {
-    a == b
-  }
+    0
+  };
+  a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= codes)
 }
 
 // ---- the BT.2100 curves ---------------------------------------------------
@@ -68,14 +93,10 @@ fn same_codes(a: [u8; 3], b: [u8; 3]) -> bool {
 fn pq_matches_st2084_reference() {
   // BT.2100 anchors: signal 1.0 ↔ linear 1.0 (= 10 000 cd/m²), signal 0 ↔
   // linear 0. The signal-1.0 fixed point holds iff c1 = c3 − c2 + 1.
+  assert!(near(pq_eotf(1.0), 1.0, 1e-6), "eotf(1.0)={}", pq_eotf(1.0));
+  assert!(near(pq_eotf(0.0), 0.0, 1e-9), "eotf(0.0)={}", pq_eotf(0.0));
   assert!(
-    (pq_eotf(1.0) - 1.0).abs() <= 1e-6,
-    "eotf(1.0)={}",
-    pq_eotf(1.0)
-  );
-  assert!(pq_eotf(0.0).abs() <= 1e-9, "eotf(0.0)={}", pq_eotf(0.0));
-  assert!(
-    (pq_inverse_eotf(1.0) - 1.0).abs() <= 1e-5,
+    near(pq_inverse_eotf(1.0), 1.0, 1e-5),
     "oetf(1.0)={}",
     pq_inverse_eotf(1.0)
   );
@@ -85,14 +106,14 @@ fn pq_matches_st2084_reference() {
   // pins all five PQ constants in the encode direction.
   const SIGNAL_100_NITS: f32 = 0.508_078_4;
   assert!(
-    (pq_inverse_eotf(0.01) - SIGNAL_100_NITS).abs() <= 5e-4,
+    near(pq_inverse_eotf(0.01), SIGNAL_100_NITS, 5e-4),
     "oetf(0.01)={} want {SIGNAL_100_NITS}",
     pq_inverse_eotf(0.01),
   );
   // colour-science `eotf_ST2084(0.508078421517399)` = 100 cd/m²: the decode
   // direction of the same anchor (normalised 0.01).
   assert!(
-    (pq_eotf(SIGNAL_100_NITS) - 0.01).abs() <= 1e-4,
+    near(pq_eotf(SIGNAL_100_NITS), 0.01, 1e-4),
     "eotf({SIGNAL_100_NITS})={} want 0.01",
     pq_eotf(SIGNAL_100_NITS),
   );
@@ -100,7 +121,7 @@ fn pq_matches_st2084_reference() {
   // PQ's inverse-EOTF maps linear 0 to a small non-zero signal `c1^m2`
   // (≈ 7.3e-7), a known property of the curve — assert it stays negligible.
   assert!(
-    pq_inverse_eotf(0.0).abs() <= 1e-5,
+    near(pq_inverse_eotf(0.0), 0.0, 1e-5),
     "oetf(0.0)={}",
     pq_inverse_eotf(0.0)
   );
@@ -116,13 +137,13 @@ fn a_super_white_saturates_at_the_peak() {
     let y = pq_eotf(c);
     assert!(y.is_finite(), "pq_eotf({c})={y} must be finite");
     assert!(
-      (y - 1.0).abs() <= 1e-6,
+      near(y, 1.0, 1e-6),
       "pq_eotf({c})={y} must saturate at 1.0 (not inf/black)"
     );
   }
   // Odd extension: super-black saturates at -1.0.
   assert!(
-    (pq_eotf(-2.0) + 1.0).abs() <= 1e-6,
+    near(pq_eotf(-2.0), -1.0, 1e-6),
     "pq_eotf(-2.0)={}",
     pq_eotf(-2.0)
   );
@@ -133,7 +154,7 @@ fn a_super_white_saturates_at_the_peak() {
   for &c in &[1.0_f32, 2.0, 10.0] {
     let e = hlg_inverse_oetf(c);
     assert!(
-      e.is_finite() && (e - hlg_peak).abs() <= 1e-6,
+      e.is_finite() && near(e, hlg_peak, 1e-6),
       "hlg_inverse_oetf({c})={e} must saturate at hlg_inverse_oetf(1.0)={hlg_peak}"
     );
   }
@@ -144,13 +165,13 @@ fn hlg_matches_bt2100_reference() {
   // BT.2100 breakpoint: scene-linear 1/12 (HLG reference white) encodes to
   // signal 0.5, and the lower (gamma) segment is exact there.
   assert!(
-    (hlg_oetf(1.0 / 12.0) - 0.5).abs() <= 1e-6,
+    near(hlg_oetf(1.0 / 12.0), 0.5, 1e-6),
     "oetf(1/12)={}",
     hlg_oetf(1.0 / 12.0),
   );
   // Inverse breakpoint: signal 0.5 decodes back to scene-linear 1/12.
   assert!(
-    (hlg_inverse_oetf(0.5) - 1.0 / 12.0).abs() <= 1e-6,
+    near(hlg_inverse_oetf(0.5), 1.0 / 12.0, 1e-6),
     "eotf(0.5)={}",
     hlg_inverse_oetf(0.5),
   );
@@ -159,12 +180,12 @@ fn hlg_matches_bt2100_reference() {
   // normalisation E = E_arib / 12, that is `oetf(0.015)` — a lower (gamma)
   // segment point: sqrt(3·0.015) = 0.2121320.
   assert!(
-    (hlg_oetf(0.015) - 0.212_132).abs() <= 1e-5,
+    near(hlg_oetf(0.015), 0.212_132, 1e-5),
     "oetf(0.015)={}",
     hlg_oetf(0.015),
   );
   assert!(
-    (hlg_inverse_oetf(0.212_132) - 0.015).abs() <= 1e-5,
+    near(hlg_inverse_oetf(0.212_132), 0.015, 1e-5),
     "eotf(0.2121320)={}",
     hlg_inverse_oetf(0.212_132),
   );
@@ -173,18 +194,22 @@ fn hlg_matches_bt2100_reference() {
   // scene-linear 1.0 ↔ signal 1.0 (c is defined to make this hold), and
   // scene-linear 0 ↔ signal 0.
   assert!(
-    (hlg_oetf(1.0) - 1.0).abs() <= 1e-4,
+    near(hlg_oetf(1.0), 1.0, 1e-4),
     "oetf(1.0)={}",
     hlg_oetf(1.0)
   );
   assert!(
-    (hlg_inverse_oetf(1.0) - 1.0).abs() <= 1e-4,
+    near(hlg_inverse_oetf(1.0), 1.0, 1e-4),
     "eotf(1.0)={}",
     hlg_inverse_oetf(1.0)
   );
-  assert!(hlg_oetf(0.0).abs() <= 1e-9, "oetf(0.0)={}", hlg_oetf(0.0));
   assert!(
-    hlg_inverse_oetf(0.0).abs() <= 1e-9,
+    near(hlg_oetf(0.0), 0.0, 1e-9),
+    "oetf(0.0)={}",
+    hlg_oetf(0.0)
+  );
+  assert!(
+    near(hlg_inverse_oetf(0.0), 0.0, 1e-9),
     "eotf(0.0)={}",
     hlg_inverse_oetf(0.0)
   );
@@ -199,39 +224,33 @@ fn each_curve_inverts_its_pair() {
   for i in 0..=256 {
     let c = i as f32 / 256.0;
     let pq = pq_inverse_eotf(pq_eotf(c));
-    assert!((pq - c).abs() <= 2e-3, "pq oetf(eotf({c}))={pq}");
+    assert!(near(pq, c, 2e-3), "pq oetf(eotf({c}))={pq}");
     let pq2 = pq_eotf(pq_inverse_eotf(c));
-    assert!((pq2 - c).abs() <= 2e-3, "pq eotf(oetf({c}))={pq2}");
+    assert!(near(pq2, c, 2e-3), "pq eotf(oetf({c}))={pq2}");
     let hlg = hlg_oetf(hlg_inverse_oetf(c));
-    assert!((hlg - c).abs() <= 1e-3, "hlg oetf(eotf({c}))={hlg}");
+    assert!(near(hlg, c, 1e-3), "hlg oetf(eotf({c}))={hlg}");
     let hlg2 = hlg_inverse_oetf(hlg_oetf(c));
-    assert!((hlg2 - c).abs() <= 1e-3, "hlg eotf(oetf({c}))={hlg2}");
+    assert!(near(hlg2, c, 1e-3), "hlg eotf(oetf({c}))={hlg2}");
   }
 }
 
-// miri's interpreted floating-point diverges from hardware for the PQ/HLG
-// transcendentals past this test's tolerance.
-#[cfg_attr(miri, ignore)]
 #[test]
 fn each_curve_is_odd() {
   // The per-channel curves are odd (`f(-c) == -f(c)`) so super-black
   // excursions linearise symmetrically rather than folding — the same
   // contract the SDR curves honour.
   for &c in &[0.05_f32, 0.25, 0.6, 0.9] {
+    assert!(near(pq_eotf(-c), -pq_eotf(c), 1e-6), "pq eotf odd at {c}");
     assert!(
-      (pq_eotf(-c) + pq_eotf(c)).abs() <= 1e-6,
-      "pq eotf odd at {c}"
-    );
-    assert!(
-      (pq_inverse_eotf(-c) + pq_inverse_eotf(c)).abs() <= 1e-6,
+      near(pq_inverse_eotf(-c), -pq_inverse_eotf(c), 1e-6),
       "pq oetf odd at {c}"
     );
     assert!(
-      (hlg_inverse_oetf(-c) + hlg_inverse_oetf(c)).abs() <= 1e-6,
+      near(hlg_inverse_oetf(-c), -hlg_inverse_oetf(c), 1e-6),
       "hlg eotf odd at {c}"
     );
     assert!(
-      (hlg_oetf(-c) + hlg_oetf(c)).abs() <= 1e-6,
+      near(hlg_oetf(-c), -hlg_oetf(c), 1e-6),
       "hlg oetf odd at {c}"
     );
   }
@@ -245,9 +264,15 @@ fn the_hdr_curves_differ_from_sdr() {
   let bt1886 = crate::resample::TransferFunction::Bt1886.eotf(c);
   let pq = pq_eotf(c);
   let hlg = hlg_inverse_oetf(c);
-  assert!((pq - bt1886).abs() > 1e-3, "PQ vs BT.1886 must differ");
-  assert!((hlg - bt1886).abs() > 1e-3, "HLG vs BT.1886 must differ");
-  assert!((pq - hlg).abs() > 1e-3, "PQ vs HLG must differ");
+  assert!(
+    below(1e-3, (pq - bt1886).abs()),
+    "PQ vs BT.1886 must differ"
+  );
+  assert!(
+    below(1e-3, (hlg - bt1886).abs()),
+    "HLG vs BT.1886 must differ"
+  );
+  assert!(below(1e-3, (pq - hlg).abs()), "PQ vs HLG must differ");
 }
 
 // ---- BT.2100 and BT.2408 anchors the mapping is built on -------------------
@@ -257,12 +282,9 @@ fn the_hdr_curves_differ_from_sdr() {
 #[test]
 fn pq_places_reference_white_at_58_percent() {
   let white = pq_inverse_eotf(REFERENCE_WHITE_NITS / PQ_PEAK_NITS);
-  assert!((white - 0.5806).abs() <= 1e-3, "PQ(203 cd/m²) = {white}");
+  assert!(near(white, 0.5806, 1e-3), "PQ(203 cd/m²) = {white}");
   let thousand = pq_inverse_eotf(1000.0 / PQ_PEAK_NITS);
-  assert!(
-    (thousand - 0.7518).abs() <= 1e-3,
-    "PQ(1000 cd/m²) = {thousand}"
-  );
+  assert!(near(thousand, 0.7518, 1e-3), "PQ(1000 cd/m²) = {thousand}");
 }
 
 /// BT.2408 on the 1000 cd/m² reference display: HLG 75% is reference white,
@@ -274,17 +296,13 @@ fn hlg_places_reference_white_at_75_percent() {
     BT2020_LUMINANCE,
     HLG_NOMINAL_PEAK_NITS,
   );
-  assert!(
-    (white[1] - 203.0).abs() <= 1.0,
-    "HLG 75% = {} cd/m²",
-    white[1]
-  );
+  assert!(near(white[1], 203.0, 1.0), "HLG 75% = {} cd/m²", white[1]);
   let grey = hlg_ootf(
     [hlg_inverse_oetf(0.38); 3],
     BT2020_LUMINANCE,
     HLG_NOMINAL_PEAK_NITS,
   );
-  assert!((grey[1] - 26.0).abs() <= 0.5, "HLG 38% = {} cd/m²", grey[1]);
+  assert!(near(grey[1], 26.0, 0.5), "HLG 38% = {} cd/m²", grey[1]);
   assert_eq!(
     hlg_ootf([0.0; 3], BT2020_LUMINANCE, HLG_NOMINAL_PEAK_NITS),
     [0.0; 3],
@@ -296,9 +314,9 @@ fn hlg_places_reference_white_at_75_percent() {
 /// beside it.
 #[test]
 fn the_hlg_system_gamma_is_bt2100s() {
-  assert_eq!(hlg_system_gamma(1000.0), 1.2);
-  assert!((hlg_system_gamma(2000.0) - 1.326_433).abs() <= 1e-5);
-  assert!((hlg_system_gamma(400.0) - 1.032_867).abs() <= 1e-5);
+  assert!(near(hlg_system_gamma(1000.0), 1.2, 0.0));
+  assert!(near(hlg_system_gamma(2000.0), 1.326_433, 1e-5));
+  assert!(near(hlg_system_gamma(400.0), 1.032_867, 1e-5));
 }
 
 /// The matrix from BT.2020 to BT.709 is ITU-R BT.2087-0's, and BT.2020's
@@ -317,7 +335,7 @@ fn the_gamut_matrix_from_bt2020_is_bt2087s() {
   for (row, (got, want)) in hdr.to_bt709.iter().zip(BT2087).enumerate() {
     for column in 0..3 {
       assert!(
-        (got[column] - want[column]).abs() <= 2e-4,
+        near(got[column], want[column], 2e-4),
         "[{row}][{column}] = {} want {}",
         got[column],
         want[column],
@@ -325,7 +343,7 @@ fn the_gamut_matrix_from_bt2020_is_bt2087s() {
     }
   }
   for (got, want) in hdr.luminance.iter().zip(BT2020_LUMINANCE) {
-    assert!((got - want).abs() <= 1e-4, "luminance {got} want {want}");
+    assert!(near(*got, want, 1e-4), "luminance {got} want {want}");
   }
 }
 
@@ -346,24 +364,27 @@ fn the_knee_starts_where_stated() {
     );
   }
   let slope = (knee(STATED_KNEE + 1e-3) - knee(STATED_KNEE)) / 1e-3;
-  assert!((slope - 1.0).abs() <= 1e-2, "slope at the knee {slope}");
+  assert!(near(slope, 1.0, 1e-2), "slope at the knee {slope}");
   let mut previous = knee(STATED_KNEE);
   for step in 1..=400 {
     let light = STATED_KNEE + step as f32 / 50.0;
     let rolled = knee(light);
     if light <= 2.0 {
-      assert!(rolled > previous, "rising at {light}: {rolled}");
+      assert!(below(previous, rolled), "rising at {light}: {rolled}");
     } else {
-      assert!(rolled >= previous, "never falling at {light}: {rolled}");
+      assert!(
+        at_most(previous, rolled),
+        "never falling at {light}: {rolled}"
+      );
     }
     assert!(
-      rolled < light && rolled <= 1.0,
+      below(rolled, light) && at_most(rolled, 1.0),
       "compressed at {light}: {rolled}"
     );
     previous = rolled;
   }
   assert!(
-    knee(2.0) < 1.0,
+    below(knee(2.0), 1.0),
     "two whites still below white: {}",
     knee(2.0)
   );
@@ -385,12 +406,12 @@ fn a_pq_and_an_hlg_ramp_map_into_sdr_with_the_stated_knee() {
           (0.0..=1.0).contains(&channel),
           "{transfer:?} {signal}: {out:?}"
         );
-        // Miri's float-intrinsic noise: each channel is its own chain of `powf` and `exp` calls.
-        assert!(close(channel, out[1], 1e-5), "grey stays grey: {out:?}");
+        assert!(near(channel, out[1], 1e-5), "grey stays grey: {out:?}");
       }
-      // Miri's float-intrinsic noise can outweigh a step's rise where the knee is nearly flat.
-      let dip = if cfg!(miri) { 1e-3 * previous } else { 1e-6 };
-      assert!(out[1] + dip >= previous, "{transfer:?} rising at {signal}");
+      assert!(
+        at_most(previous, out[1] + 1e-6),
+        "{transfer:?} rising at {signal}"
+      );
       previous = out[1];
 
       let light = match transfer {
@@ -399,14 +420,15 @@ fn a_pq_and_an_hlg_ramp_map_into_sdr_with_the_stated_knee() {
       };
       let shown = powf32(out[1], 2.4);
       let want = stated_knee(light);
-      // Miri's float-intrinsic noise reaches both sides of this comparison, each through `powf`.
-      let slack = if cfg!(miri) { 1e-3 } else { 2e-4 };
       assert!(
-        (shown - want).abs() <= 2e-4 + slack * want,
+        near(shown, want, 2e-4 + 2e-4 * want),
         "{transfer:?} {signal}: shown {shown} want {want} from light {light}",
       );
       if light > STATED_KNEE {
-        assert!(shown < light, "above the knee the light is compressed");
+        assert!(
+          below(shown, light),
+          "above the knee the light is compressed: {shown} from {light}"
+        );
       }
     }
   }
@@ -421,17 +443,14 @@ fn reference_white_and_grey_land_where_stated() {
   let hlg = SdrMapping::for_picture(&Transfer::AribStdB67Hlg, &Primaries::Bt2020).expect("HLG");
 
   let white = pq.map_signal([pq_inverse_eotf(203.0 / 10_000.0); 3])[1];
-  assert!((white - 0.9606).abs() <= 1e-3, "PQ reference white {white}");
+  assert!(near(white, 0.9606, 1e-3), "PQ reference white {white}");
   let white = hlg.map_signal([0.75; 3])[1];
-  assert!(
-    (white - 0.9606).abs() <= 2e-3,
-    "HLG reference white {white}"
-  );
+  assert!(near(white, 0.9606, 2e-3), "HLG reference white {white}");
 
   let grey = pq.map_signal([pq_inverse_eotf(26.0 / 10_000.0); 3])[1];
-  assert!((grey - 0.4247).abs() <= 1e-3, "PQ 18% grey {grey}");
+  assert!(near(grey, 0.4247, 1e-3), "PQ 18% grey {grey}");
   let grey = hlg.map_signal([0.38; 3])[1];
-  assert!((grey - 0.4264).abs() <= 2e-3, "HLG 18% grey {grey}");
+  assert!(near(grey, 0.4264, 2e-3), "HLG 18% grey {grey}");
 }
 
 /// The declared gamut is converted: a saturated BT.2020 green is not the
@@ -446,20 +465,19 @@ fn the_declared_gamut_is_converted_to_bt709() {
     let green = [0.3, 0.6, 0.3];
     let (from_wide, from_narrow) = (wide.map_signal(green), narrow.map_signal(green));
     assert!(
-      from_wide[0] + 0.05 < from_narrow[0],
+      below(from_wide[0] + 0.05, from_narrow[0]),
       "{transfer:?}: BT.2020 green loses red in BT.709 ({from_wide:?} vs {from_narrow:?})",
     );
     let grey = [0.5; 3];
     let (a, b) = (wide.map_signal(grey), narrow.map_signal(grey));
     for channel in 0..3 {
-      // Miri's float-intrinsic noise: the two mappings are separate chains of intrinsic calls.
-      assert!(close(a[channel], b[channel], 1e-5), "grey: {a:?} vs {b:?}");
+      assert!(near(a[channel], b[channel], 1e-5), "grey: {a:?} vs {b:?}");
     }
     let unstated =
       SdrMapping::for_picture(&transfer, &Primaries::Unspecified).expect("unspecified");
     if cfg!(miri) {
       // Miri's float-intrinsic noise: each construction builds its 8-bit table through its own
-      // `powf`/`exp` calls, so two equal mappings agree there only within `close`.
+      // `powf`/`exp` calls, so two equal mappings agree there only within `near`.
       assert_eq!(unstated.transfer(), wide.transfer());
       let (a, b) = (
         unstated.hdr.as_ref().expect("maps"),
@@ -467,18 +485,18 @@ fn the_declared_gamut_is_converted_to_bt709() {
       );
       for (x, y) in a.to_bt709.iter().flatten().zip(b.to_bt709.iter().flatten()) {
         assert!(
-          close(*x, *y, 0.0),
+          near(*x, *y, 0.0),
           "an unspecified gamut is BT.2020: {x} vs {y}"
         );
       }
       for (x, y) in a.luminance.iter().zip(&b.luminance) {
-        assert!(close(*x, *y, 0.0), "and so is its luminance: {x} vs {y}");
+        assert!(near(*x, *y, 0.0), "and so is its luminance: {x} vs {y}");
       }
       for probe in [[0.1, 0.4, 0.9], [0.5; 3], [0.75, 0.2, 0.3], [1.0, 1.0, 0.0]] {
         let (x, y) = (unstated.map_signal(probe), wide.map_signal(probe));
         for channel in 0..3 {
           assert!(
-            close(x[channel], y[channel], 0.0),
+            near(x[channel], y[channel], 0.0),
             "{probe:?}: {x:?} vs {y:?}"
           );
         }
@@ -491,7 +509,7 @@ fn the_declared_gamut_is_converted_to_bt709() {
       for (column, value) in line.iter().enumerate() {
         let want = if row == column { 1.0 } else { 0.0 };
         assert!(
-          (value - want).abs() <= 1e-6,
+          near(*value, want, 1e-6),
           "BT.709 to BT.709 [{row}][{column}] {value}"
         );
       }
@@ -597,7 +615,7 @@ fn the_8_bit_face_is_the_signal_face_quantised() {
           let want = mapping
             .map_signal(pixel.map(|c| c as f32 / 255.0))
             .map(code);
-          // Miri's float-intrinsic noise: the face's table and the signal face are separate calls.
+          // The face's table and the signal face are separate intrinsic calls: `same_codes`.
           assert!(
             same_codes(mapped, want),
             "{transfer:?} over {primaries:?}: {pixel:?} gave {mapped:?}, want {want:?}"
@@ -623,7 +641,7 @@ fn the_16_bit_face_maps_at_its_native_depth() {
     let want = mapping
       .map_signal([0, 1, 2].map(|i| f32::from(pixel[i]) / 1023.0))
       .map(code);
-    // Miri's float-intrinsic noise: the face and the test call the mapping separately.
+    // The face and the test call the mapping separately: `same_codes`.
     assert!(
       same_codes(*mapped, want),
       "{pixel:?} gave {mapped:?}, want {want:?}"
@@ -633,7 +651,7 @@ fn the_16_bit_face_maps_at_its_native_depth() {
   let (mut over, mut full) = ([0u8; 3], [0u8; 3]);
   mapping.map_rgb16(&[2000; 3], 10, &mut over).expect("whole");
   mapping.map_rgb16(&[1023; 3], 10, &mut full).expect("whole");
-  // Miri's float-intrinsic noise: two calls over the same full-scale signal.
+  // Two calls over the same full-scale signal: `same_codes`.
   assert!(
     same_codes(over, full),
     "above full scale reads as full scale"
@@ -693,5 +711,5 @@ fn the_stated_constants() {
   assert_eq!(REFERENCE_WHITE_NITS, 203.0);
   assert_eq!(HLG_NOMINAL_PEAK_NITS, 1000.0);
   assert_eq!(PQ_PEAK_NITS, 10_000.0);
-  assert!((hlg_oetf(1.0 / 12.0) - 0.5).abs() <= 1e-6);
+  assert!(near(hlg_oetf(1.0 / 12.0), 0.5, 1e-6));
 }

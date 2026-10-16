@@ -84,151 +84,160 @@
 //! module) — every row below has a corresponding `assert_source::<F>()`
 //! call there, gated by the same Cargo feature:
 //!
-//! | Family                          | Bit depth | Subsampling | Packing                                                  | FFmpeg name                     |
-//! | ------------------------------- | --------- | ----------- | --------------------------------------------------------- | -------------------------------- |
-//! | [`Yuv411p`]                     | 8         | 4:1:1       | planar (DV-NTSC legacy)                                  | `yuv411p`                       |
-//! | [`Yuv410p`]                     | 8         | 4:1:0       | planar (DV-NTSC / Cinepak-Sorenson legacy)               | `yuv410p`                       |
-//! | [`Yuv420p`]                     | 8         | 4:2:0       | planar                                                   | `yuv420p`                       |
-//! | [`Yuv422p`]                     | 8         | 4:2:2       | planar                                                   | `yuv422p`                       |
-//! | [`Yuv440p`]                     | 8         | 4:4:0       | planar                                                   | `yuv440p`                       |
-//! | [`Yuv444p`]                     | 8         | 4:4:4       | planar                                                   | `yuv444p`                       |
-//! | [`Nv12`]                        | 8         | 4:2:0       | semi-planar UV                                           | `nv12`                          |
-//! | [`Nv21`]                        | 8         | 4:2:0       | semi-planar VU                                           | `nv21`                          |
-//! | [`Nv16`]                        | 8         | 4:2:2       | semi-planar UV                                           | `nv16`                          |
-//! | [`Nv20`]                        | 10        | 4:2:2       | semi-planar UV, low-packed                               | `nv20le`                        |
-//! | [`Nv24`]                        | 8         | 4:4:4       | semi-planar UV                                           | `nv24`                          |
-//! | [`Nv42`]                        | 8         | 4:4:4       | semi-planar VU                                           | `nv42`                          |
-//! | [`Yuv420p9`]                    | 9         | 4:2:0       | planar, low-packed                                       | `yuv420p9le`                    |
-//! | [`Yuv420p10`]                   | 10        | 4:2:0       | planar, low-packed                                       | `yuv420p10le`                   |
-//! | [`Yuv420p12`]                   | 12        | 4:2:0       | planar, low-packed                                       | `yuv420p12le`                   |
-//! | [`Yuv420p14`]                   | 14        | 4:2:0       | planar, low-packed                                       | `yuv420p14le`                   |
-//! | [`Yuv420p16`]                   | 16        | 4:2:0       | planar                                                   | `yuv420p16le`                   |
-//! | [`Yuv422p9`]                    | 9         | 4:2:2       | planar, low-packed                                       | `yuv422p9le`                    |
-//! | [`Yuv422p10`]                   | 10        | 4:2:2       | planar, low-packed                                       | `yuv422p10le`                   |
-//! | [`Yuv422p12`]                   | 12        | 4:2:2       | planar, low-packed                                       | `yuv422p12le`                   |
-//! | [`Yuv422p14`]                   | 14        | 4:2:2       | planar, low-packed                                       | `yuv422p14le`                   |
-//! | [`Yuv422p16`]                   | 16        | 4:2:2       | planar                                                   | `yuv422p16le`                   |
-//! | [`Yuv440p10`]                   | 10        | 4:4:0       | planar, low-packed                                       | `yuv440p10le`                   |
-//! | [`Yuv440p12`]                   | 12        | 4:4:0       | planar, low-packed                                       | `yuv440p12le`                   |
-//! | [`Yuv444p9`]                    | 9         | 4:4:4       | planar, low-packed                                       | `yuv444p9le`                    |
-//! | [`Yuv444p10`]                   | 10        | 4:4:4       | planar, low-packed                                       | `yuv444p10le`                   |
-//! | [`Yuv444p12`]                   | 12        | 4:4:4       | planar, low-packed                                       | `yuv444p12le`                   |
-//! | [`Yuv444p14`]                   | 14        | 4:4:4       | planar, low-packed                                       | `yuv444p14le`                   |
-//! | [`Yuv444p16`]                   | 16        | 4:4:4       | planar                                                   | `yuv444p16le`                   |
-//! | [`Yuv444p10Msb`]                | 10        | 4:4:4       | planar, MSB-packed                                       | `yuv444p10msble`                |
-//! | [`Yuv444p12Msb`]                | 12        | 4:4:4       | planar, MSB-packed                                       | `yuv444p12msble`                |
-//! | [`P010`]                        | 10        | 4:2:0       | semi-planar, high-packed                                 | `p010le`                        |
-//! | [`P012`]                        | 12        | 4:2:0       | semi-planar, high-packed                                 | `p012le`                        |
-//! | [`P016`]                        | 16        | 4:2:0       | semi-planar                                              | `p016le`                        |
-//! | [`P210`]                        | 10        | 4:2:2       | semi-planar, high-packed                                 | `p210le`                        |
-//! | [`P212`]                        | 12        | 4:2:2       | semi-planar, high-packed                                 | `p212le`                        |
-//! | [`P216`]                        | 16        | 4:2:2       | semi-planar                                              | `p216le`                        |
-//! | [`P410`]                        | 10        | 4:4:4       | semi-planar, high-packed                                 | `p410le`                        |
-//! | [`P412`]                        | 12        | 4:4:4       | semi-planar, high-packed                                 | `p412le`                        |
-//! | [`P416`]                        | 16        | 4:4:4       | semi-planar                                              | `p416le`                        |
-//! | [`Yuva420p`]                    | 8         | 4:2:0       | planar Y/U/V/A (4 planes), source α                      | `yuva420p`                      |
-//! | [`Yuva420p9`]                   | 9         | 4:2:0       | planar Y/U/V/A, low-packed, source α                     | `yuva420p9le`                   |
-//! | [`Yuva420p10`]                  | 10        | 4:2:0       | planar Y/U/V/A, low-packed, source α                     | `yuva420p10le`                  |
-//! | [`Yuva420p12`]                  | 12        | 4:2:0       | planar Y/U/V/A, low-packed, source α (no FFmpeg enum)    | `yuva420p12le`                  |
-//! | [`Yuva420p16`]                  | 16        | 4:2:0       | planar Y/U/V/A, source α                                 | `yuva420p16le`                  |
-//! | [`Yuva422p`]                    | 8         | 4:2:2       | planar Y/U/V/A (4 planes), source α                      | `yuva422p`                      |
-//! | [`Yuva422p9`]                   | 9         | 4:2:2       | planar Y/U/V/A, low-packed, source α                     | `yuva422p9le`                   |
-//! | [`Yuva422p10`]                  | 10        | 4:2:2       | planar Y/U/V/A, low-packed, source α                     | `yuva422p10le`                  |
-//! | [`Yuva422p12`]                  | 12        | 4:2:2       | planar Y/U/V/A, low-packed, source α                     | `yuva422p12le`                  |
-//! | [`Yuva422p16`]                  | 16        | 4:2:2       | planar Y/U/V/A, source α                                 | `yuva422p16le`                  |
-//! | [`Yuva444p`]                    | 8         | 4:4:4       | planar Y/U/V/A (4 planes), source α                      | `yuva444p`                      |
-//! | [`Yuva444p9`]                   | 9         | 4:4:4       | planar Y/U/V/A, low-packed, source α                     | `yuva444p9le`                   |
-//! | [`Yuva444p10`]                  | 10        | 4:4:4       | planar Y/U/V/A, low-packed, source α                     | `yuva444p10le`                  |
-//! | [`Yuva444p12`]                  | 12        | 4:4:4       | planar Y/U/V/A, low-packed, source α                     | `yuva444p12le`                  |
-//! | [`Yuva444p14`]                  | 14        | 4:4:4       | planar Y/U/V/A, low-packed, source α (no FFmpeg enum)    | `yuva444p14le`                  |
-//! | [`Yuva444p16`]                  | 16        | 4:4:4       | planar Y/U/V/A, source α                                 | `yuva444p16le`                  |
-//! | [`Yuyv422`]                     | 8         | 4:2:2       | packed byte quad (Y0,U0,Y1,V0)                           | `yuyv422`                       |
-//! | [`Uyvy422`]                     | 8         | 4:2:2       | packed byte quad (U0,Y0,V0,Y1)                           | `uyvy422`                       |
-//! | [`Yvyu422`]                     | 8         | 4:2:2       | packed byte quad (Y0,V0,Y1,U0)                           | `yvyu422`                       |
-//! | [`Uyyvyy411`]                   | 8         | 4:1:1       | packed, 6B/4px block (U,Y0,Y1,V,Y2,Y3)                   | `uyyvyy411`                     |
-//! | [`V210`]                        | 10        | 4:2:2       | packed (3 x 10-bit/u32)                                  | `v210`                          |
-//! | [`Y210`]                        | 10        | 4:2:2       | packed, MSB-aligned u16                                  | `y210le`                        |
-//! | [`Y212`]                        | 12        | 4:2:2       | packed, MSB-aligned u16                                  | `y212le`                        |
-//! | [`Y216`]                        | 16        | 4:2:2       | packed, full-range u16                                   | `y216le`                        |
-//! | [`V410`]                        | 10        | 4:4:4       | packed (one 32-bit word)                                 | `v410`                          |
-//! | [`V30X`]                        | 10        | 4:4:4       | packed (one 32-bit word)                                 | `v30xle`                        |
-//! | [`Xv36`]                        | 12        | 4:4:4       | packed u16 quadruple, α-as-padding                       | `xv36le`                        |
-//! | [`Xv48`]                        | 16        | 4:4:4       | packed u16 quadruple, α-as-padding                       | `xv48le`                        |
-//! | [`Vuya`]                        | 8         | 4:4:4       | packed byte quadruple, source α                          | `vuya`                          |
-//! | [`Vuyx`]                        | 8         | 4:4:4       | packed byte quadruple, α-as-padding                      | `vuyx`                          |
-//! | [`Ayuv`]                        | 8         | 4:4:4       | packed byte quadruple (A,Y,U,V), source α                | `ayuv`                          |
-//! | [`Uyva`]                        | 8         | 4:4:4       | packed byte quadruple (U,Y,V,A), source α                | `uyva`                          |
-//! | [`Vyu444`]                      | 8         | 4:4:4       | packed byte triple (V,Y,U), no alpha                     | `vyu444`                        |
-//! | [`Ayuv64`]                      | 16        | 4:4:4       | packed u16 quadruple, source α                           | `ayuv64le`                      |
-//! | [`Gbrp`]                        | 8         | 4:4:4       | planar GBR (3 planes)                                    | `gbrp`                          |
-//! | [`Gbrp9`]                       | 9         | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp9le`                       |
-//! | [`Gbrp10`]                      | 10        | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp10le`                      |
-//! | [`Gbrp12`]                      | 12        | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp12le`                      |
-//! | [`Gbrp14`]                      | 14        | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp14le`                      |
-//! | [`Gbrp16`]                      | 16        | 4:4:4       | planar GBR (3 planes)                                    | `gbrp16le`                      |
-//! | [`Gbrp10Msb`]                   | 10        | 4:4:4       | planar GBR (3 planes), MSB-packed                        | `gbrp10msble`                   |
-//! | [`Gbrp12Msb`]                   | 12        | 4:4:4       | planar GBR (3 planes), MSB-packed                        | `gbrp12msble`                   |
-//! | [`Gbrap`]                       | 8         | 4:4:4       | planar GBR + A (4 planes, source α)                      | `gbrap`                         |
-//! | [`Gbrap10`]                     | 10        | 4:4:4       | planar GBR+A (4 planes), low-packed, source α            | `gbrap10le`                     |
-//! | [`Gbrap12`]                     | 12        | 4:4:4       | planar GBR+A (4 planes), low-packed, source α            | `gbrap12le`                     |
-//! | [`Gbrap14`]                     | 14        | 4:4:4       | planar GBR+A (4 planes), low-packed, source α            | `gbrap14le`                     |
-//! | [`Gbrap16`]                     | 16        | 4:4:4       | planar GBR+A (4 planes), source α                        | `gbrap16le`                     |
-//! | [`Gbrap32`]                     | 32        | 4:4:4       | planar GBR+A (4 planes), full u32, source α              | `gbrap32le`                     |
-//! | [`Gbrpf16`]                     | 16f       | 4:4:4       | planar GBR (3 planes), half-float                        | `gbrpf16le`                     |
-//! | [`Gbrpf32`]                     | 32f       | 4:4:4       | planar GBR (3 planes), f32                               | `gbrpf32le`                     |
-//! | [`Gbrapf16`]                    | 16f       | 4:4:4       | planar GBR+A (4 planes), half-float, source α            | `gbrapf16le`                    |
-//! | [`Gbrapf32`]                    | 32f       | 4:4:4       | planar GBR+A (4 planes), f32, source α                   | `gbrapf32le`                    |
-//! | [`Rgb24`]                       | 8         | 4:4:4       | packed (R,G,B)                                           | `rgb24`                         |
-//! | [`Bgr24`]                       | 8         | 4:4:4       | packed (B,G,R)                                           | `bgr24`                         |
-//! | [`Rgba`]                        | 8         | 4:4:4       | packed (R,G,B,A), source α                               | `rgba`                          |
-//! | [`Bgra`]                        | 8         | 4:4:4       | packed (B,G,R,A), source α                               | `bgra`                          |
-//! | [`Argb`]                        | 8         | 4:4:4       | packed (A,R,G,B), source α                               | `argb`                          |
-//! | [`Abgr`]                        | 8         | 4:4:4       | packed (A,B,G,R), source α                               | `abgr`                          |
-//! | [`Xrgb`]                        | 8         | 4:4:4       | packed (X,R,G,B), α-as-padding                           | `0rgb`                          |
-//! | [`Rgbx`]                        | 8         | 4:4:4       | packed (R,G,B,X), α-as-padding                           | `rgb0`                          |
-//! | [`Xbgr`]                        | 8         | 4:4:4       | packed (X,B,G,R), α-as-padding                           | `0bgr`                          |
-//! | [`Bgrx`]                        | 8         | 4:4:4       | packed (B,G,R,X), α-as-padding                           | `bgr0`                          |
-//! | [`Rgb48`]                       | 16        | 4:4:4       | packed u16 triple (R,G,B)                                | `rgb48le`                       |
-//! | [`Bgr48`]                       | 16        | 4:4:4       | packed u16 triple (B,G,R)                                | `bgr48le`                       |
-//! | [`Rgba64`]                      | 16        | 4:4:4       | packed u16 quadruple, source α                           | `rgba64le`                      |
-//! | [`Bgra64`]                      | 16        | 4:4:4       | packed u16 quadruple, source α                           | `bgra64le`                      |
-//! | [`Rgb96`]                       | 32        | 4:4:4       | packed u32 triple (R,G,B)                                | `rgb96le`                       |
-//! | [`Rgba128`]                     | 32        | 4:4:4       | packed u32 quadruple, source α                           | `rgba128le`                     |
-//! | [`X2Rgb10`]                     | 10        | 4:4:4       | packed u32, 2-bit pad (R,G,B)                            | `x2rgb10le`                     |
-//! | [`X2Bgr10`]                     | 10        | 4:4:4       | packed u32, 2-bit pad (B,G,R)                            | `x2bgr10le`                     |
-//! | [`Rgb444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (R,G,B)                            | `rgb444le`                      |
-//! | [`Bgr444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (B,G,R)                            | `bgr444le`                      |
-//! | [`Rgb555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (R,G,B)                            | `rgb555le`                      |
-//! | [`Bgr555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (B,G,R)                            | `bgr555le`                      |
-//! | [`Rgb565`]                      | 5/6/5     | 4:4:4       | packed u16 (R,G,B)                                       | `rgb565le`                      |
-//! | [`Bgr565`]                      | 5/6/5     | 4:4:4       | packed u16 (B,G,R)                                       | `bgr565le`                      |
-//! | [`Rgb8`]                        | 3/3/2     | 4:4:4       | packed byte (R,G,B)                                      | `rgb8`                          |
-//! | [`Bgr8`]                        | 2/3/3     | 4:4:4       | packed byte (B,G,R)                                      | `bgr8`                          |
-//! | [`Rgb4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (R,G,B)                          | `rgb4_byte`                     |
-//! | [`Bgr4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (B,G,R)                          | `bgr4_byte`                     |
-//! | [`Rgb4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (R,G,B)                              | `rgb4`                          |
-//! | [`Bgr4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (B,G,R)                              | `bgr4`                          |
-//! | [`Rgbf16`]                      | 16f       | 4:4:4       | packed half-float triple (R,G,B)                         | `rgbf16`                        |
-//! | [`Rgbf32`]                      | 32f       | 4:4:4       | packed f32 triple (R,G,B)                                | `rgbf32`                        |
-//! | [`Rgbaf16`]                     | 16f       | 4:4:4       | packed half-float quadruple, source α                    | `rgbaf16le`                     |
-//! | [`Rgbaf32`]                     | 32f       | 4:4:4       | packed f32 quadruple, source α                           | `rgbaf32le`                     |
-//! | [`Gray8`]                       | 8         | N/A         | single luma plane                                        | `gray`                          |
-//! | [`Gray9`]                       | 9         | N/A         | single luma plane, low-packed u16                        | `gray9le`                       |
-//! | [`Gray10`]                      | 10        | N/A         | single luma plane, low-packed u16                        | `gray10le`                      |
-//! | [`Gray12`]                      | 12        | N/A         | single luma plane, low-packed u16                        | `gray12le`                      |
-//! | [`Gray14`]                      | 14        | N/A         | single luma plane, low-packed u16                        | `gray14le`                      |
-//! | [`Gray16`]                      | 16        | N/A         | single luma plane                                        | `gray16le`                      |
-//! | [`Gray32`]                      | 32        | N/A         | single luma plane, u32                                   | `gray32le`                      |
-//! | [`Grayf16`]                     | 16f       | N/A         | single luma plane, half-float                            | `grayf16le`                     |
-//! | [`Grayf32`]                     | 32f       | N/A         | single luma plane, f32                                   | `grayf32le`                     |
-//! | [`Ya8`]                         | 8         | N/A         | packed luma+alpha byte pairs, source α                   | `ya8`                           |
-//! | [`Ya16`]                        | 16        | N/A         | packed luma+alpha u16 pairs, source α                    | `ya16le`                        |
-//! | [`Yaf16`]                       | 16f       | N/A         | packed luma+alpha half-float pairs, source α             | `yaf16le`                       |
-//! | [`Yaf32`]                       | 32f       | N/A         | packed luma+alpha f32 pairs, source α                    | `yaf32le`                       |
-//! | [`Monoblack`]                   | 1         | N/A         | 1bpp bitmap, MSB-first, 0=black                          | `monoblack`                     |
-//! | [`Monowhite`]                   | 1         | N/A         | 1bpp bitmap, MSB-first, 0=white                          | `monowhite`                     |
-//! | [`Pal8`]                        | 8         | N/A         | single index plane + 256-entry palette                   | `pal8`                          |
-//! | [`Xyz12`](crate::source::Xyz12) | 12        | 4:4:4       | packed CIE XYZ (3 x u16, high-bit-packed: bits `[15:4]`) | `xyz12le` / `xyz12be`           |
+//! | Family                          | Bit depth | Subsampling | Packing                                                  | FFmpeg name                     | `rgb_u16` depth   |
+//! | ------------------------------- | --------- | ----------- | --------------------------------------------------------- | -------------------------------- | ----------------- |
+//! | [`Yuv411p`]                     | 8         | 4:1:1       | planar (DV-NTSC legacy)                                  | `yuv411p`                       | —                 |
+//! | [`Yuv410p`]                     | 8         | 4:1:0       | planar (DV-NTSC / Cinepak-Sorenson legacy)               | `yuv410p`                       | —                 |
+//! | [`Yuv420p`]                     | 8         | 4:2:0       | planar                                                   | `yuv420p`                       | —                 |
+//! | [`Yuv422p`]                     | 8         | 4:2:2       | planar                                                   | `yuv422p`                       | —                 |
+//! | [`Yuv440p`]                     | 8         | 4:4:0       | planar                                                   | `yuv440p`                       | —                 |
+//! | [`Yuv444p`]                     | 8         | 4:4:4       | planar                                                   | `yuv444p`                       | —                 |
+//! | [`Nv12`]                        | 8         | 4:2:0       | semi-planar UV                                           | `nv12`                          | —                 |
+//! | [`Nv21`]                        | 8         | 4:2:0       | semi-planar VU                                           | `nv21`                          | —                 |
+//! | [`Nv16`]                        | 8         | 4:2:2       | semi-planar UV                                           | `nv16`                          | —                 |
+//! | [`Nv20`]                        | 10        | 4:2:2       | semi-planar UV, low-packed                               | `nv20le`                        | 10                |
+//! | [`Nv24`]                        | 8         | 4:4:4       | semi-planar UV                                           | `nv24`                          | —                 |
+//! | [`Nv42`]                        | 8         | 4:4:4       | semi-planar VU                                           | `nv42`                          | —                 |
+//! | [`Yuv420p9`]                    | 9         | 4:2:0       | planar, low-packed                                       | `yuv420p9le`                    | 9                 |
+//! | [`Yuv420p10`]                   | 10        | 4:2:0       | planar, low-packed                                       | `yuv420p10le`                   | 10                |
+//! | [`Yuv420p12`]                   | 12        | 4:2:0       | planar, low-packed                                       | `yuv420p12le`                   | 12                |
+//! | [`Yuv420p14`]                   | 14        | 4:2:0       | planar, low-packed                                       | `yuv420p14le`                   | 14                |
+//! | [`Yuv420p16`]                   | 16        | 4:2:0       | planar                                                   | `yuv420p16le`                   | 16                |
+//! | [`Yuv422p9`]                    | 9         | 4:2:2       | planar, low-packed                                       | `yuv422p9le`                    | 9                 |
+//! | [`Yuv422p10`]                   | 10        | 4:2:2       | planar, low-packed                                       | `yuv422p10le`                   | 10                |
+//! | [`Yuv422p12`]                   | 12        | 4:2:2       | planar, low-packed                                       | `yuv422p12le`                   | 12                |
+//! | [`Yuv422p14`]                   | 14        | 4:2:2       | planar, low-packed                                       | `yuv422p14le`                   | 14                |
+//! | [`Yuv422p16`]                   | 16        | 4:2:2       | planar                                                   | `yuv422p16le`                   | 16                |
+//! | [`Yuv440p10`]                   | 10        | 4:4:0       | planar, low-packed                                       | `yuv440p10le`                   | 10                |
+//! | [`Yuv440p12`]                   | 12        | 4:4:0       | planar, low-packed                                       | `yuv440p12le`                   | 12                |
+//! | [`Yuv444p9`]                    | 9         | 4:4:4       | planar, low-packed                                       | `yuv444p9le`                    | 9                 |
+//! | [`Yuv444p10`]                   | 10        | 4:4:4       | planar, low-packed                                       | `yuv444p10le`                   | 10                |
+//! | [`Yuv444p12`]                   | 12        | 4:4:4       | planar, low-packed                                       | `yuv444p12le`                   | 12                |
+//! | [`Yuv444p14`]                   | 14        | 4:4:4       | planar, low-packed                                       | `yuv444p14le`                   | 14                |
+//! | [`Yuv444p16`]                   | 16        | 4:4:4       | planar                                                   | `yuv444p16le`                   | 16                |
+//! | [`Yuv444p10Msb`]                | 10        | 4:4:4       | planar, MSB-packed                                       | `yuv444p10msble`                | 10                |
+//! | [`Yuv444p12Msb`]                | 12        | 4:4:4       | planar, MSB-packed                                       | `yuv444p12msble`                | 12                |
+//! | [`P010`]                        | 10        | 4:2:0       | semi-planar, high-packed                                 | `p010le`                        | 10                |
+//! | [`P012`]                        | 12        | 4:2:0       | semi-planar, high-packed                                 | `p012le`                        | 12                |
+//! | [`P016`]                        | 16        | 4:2:0       | semi-planar                                              | `p016le`                        | 16                |
+//! | [`P210`]                        | 10        | 4:2:2       | semi-planar, high-packed                                 | `p210le`                        | 10                |
+//! | [`P212`]                        | 12        | 4:2:2       | semi-planar, high-packed                                 | `p212le`                        | 12                |
+//! | [`P216`]                        | 16        | 4:2:2       | semi-planar                                              | `p216le`                        | 16                |
+//! | [`P410`]                        | 10        | 4:4:4       | semi-planar, high-packed                                 | `p410le`                        | 10                |
+//! | [`P412`]                        | 12        | 4:4:4       | semi-planar, high-packed                                 | `p412le`                        | 12                |
+//! | [`P416`]                        | 16        | 4:4:4       | semi-planar                                              | `p416le`                        | 16                |
+//! | [`Yuva420p`]                    | 8         | 4:2:0       | planar Y/U/V/A (4 planes), source α                      | `yuva420p`                      | —                 |
+//! | [`Yuva420p9`]                   | 9         | 4:2:0       | planar Y/U/V/A, low-packed, source α                     | `yuva420p9le`                   | 9                 |
+//! | [`Yuva420p10`]                  | 10        | 4:2:0       | planar Y/U/V/A, low-packed, source α                     | `yuva420p10le`                  | 10                |
+//! | [`Yuva420p12`]                  | 12        | 4:2:0       | planar Y/U/V/A, low-packed, source α (no FFmpeg enum)    | `yuva420p12le`                  | 12                |
+//! | [`Yuva420p16`]                  | 16        | 4:2:0       | planar Y/U/V/A, source α                                 | `yuva420p16le`                  | 16                |
+//! | [`Yuva422p`]                    | 8         | 4:2:2       | planar Y/U/V/A (4 planes), source α                      | `yuva422p`                      | —                 |
+//! | [`Yuva422p9`]                   | 9         | 4:2:2       | planar Y/U/V/A, low-packed, source α                     | `yuva422p9le`                   | 9                 |
+//! | [`Yuva422p10`]                  | 10        | 4:2:2       | planar Y/U/V/A, low-packed, source α                     | `yuva422p10le`                  | 10                |
+//! | [`Yuva422p12`]                  | 12        | 4:2:2       | planar Y/U/V/A, low-packed, source α                     | `yuva422p12le`                  | 12                |
+//! | [`Yuva422p16`]                  | 16        | 4:2:2       | planar Y/U/V/A, source α                                 | `yuva422p16le`                  | 16                |
+//! | [`Yuva444p`]                    | 8         | 4:4:4       | planar Y/U/V/A (4 planes), source α                      | `yuva444p`                      | —                 |
+//! | [`Yuva444p9`]                   | 9         | 4:4:4       | planar Y/U/V/A, low-packed, source α                     | `yuva444p9le`                   | 9                 |
+//! | [`Yuva444p10`]                  | 10        | 4:4:4       | planar Y/U/V/A, low-packed, source α                     | `yuva444p10le`                  | 10                |
+//! | [`Yuva444p12`]                  | 12        | 4:4:4       | planar Y/U/V/A, low-packed, source α                     | `yuva444p12le`                  | 12                |
+//! | [`Yuva444p14`]                  | 14        | 4:4:4       | planar Y/U/V/A, low-packed, source α (no FFmpeg enum)    | `yuva444p14le`                  | 14                |
+//! | [`Yuva444p16`]                  | 16        | 4:4:4       | planar Y/U/V/A, source α                                 | `yuva444p16le`                  | 16                |
+//! | [`Yuyv422`]                     | 8         | 4:2:2       | packed byte quad (Y0,U0,Y1,V0)                           | `yuyv422`                       | —                 |
+//! | [`Uyvy422`]                     | 8         | 4:2:2       | packed byte quad (U0,Y0,V0,Y1)                           | `uyvy422`                       | —                 |
+//! | [`Yvyu422`]                     | 8         | 4:2:2       | packed byte quad (Y0,V0,Y1,U0)                           | `yvyu422`                       | —                 |
+//! | [`Uyyvyy411`]                   | 8         | 4:1:1       | packed, 6B/4px block (U,Y0,Y1,V,Y2,Y3)                   | `uyyvyy411`                     | —                 |
+//! | [`V210`]                        | 10        | 4:2:2       | packed (3 x 10-bit/u32)                                  | `v210`                          | 10                |
+//! | [`Y210`]                        | 10        | 4:2:2       | packed, MSB-aligned u16                                  | `y210le`                        | 10                |
+//! | [`Y212`]                        | 12        | 4:2:2       | packed, MSB-aligned u16                                  | `y212le`                        | 12                |
+//! | [`Y216`]                        | 16        | 4:2:2       | packed, full-range u16                                   | `y216le`                        | 16                |
+//! | [`V410`]                        | 10        | 4:4:4       | packed (one 32-bit word)                                 | `v410`                          | 10                |
+//! | [`V30X`]                        | 10        | 4:4:4       | packed (one 32-bit word)                                 | `v30xle`                        | 10                |
+//! | [`Xv36`]                        | 12        | 4:4:4       | packed u16 quadruple, α-as-padding                       | `xv36le`                        | 12                |
+//! | [`Xv48`]                        | 16        | 4:4:4       | packed u16 quadruple, α-as-padding                       | `xv48le`                        | 16                |
+//! | [`Vuya`]                        | 8         | 4:4:4       | packed byte quadruple, source α                          | `vuya`                          | —                 |
+//! | [`Vuyx`]                        | 8         | 4:4:4       | packed byte quadruple, α-as-padding                      | `vuyx`                          | —                 |
+//! | [`Ayuv`]                        | 8         | 4:4:4       | packed byte quadruple (A,Y,U,V), source α                | `ayuv`                          | —                 |
+//! | [`Uyva`]                        | 8         | 4:4:4       | packed byte quadruple (U,Y,V,A), source α                | `uyva`                          | —                 |
+//! | [`Vyu444`]                      | 8         | 4:4:4       | packed byte triple (V,Y,U), no alpha                     | `vyu444`                        | —                 |
+//! | [`Ayuv64`]                      | 16        | 4:4:4       | packed u16 quadruple, source α                           | `ayuv64le`                      | 16                |
+//! | [`Gbrp`]                        | 8         | 4:4:4       | planar GBR (3 planes)                                    | `gbrp`                          | —                 |
+//! | [`Gbrp9`]                       | 9         | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp9le`                       | 9                 |
+//! | [`Gbrp10`]                      | 10        | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp10le`                      | 10                |
+//! | [`Gbrp12`]                      | 12        | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp12le`                      | 12                |
+//! | [`Gbrp14`]                      | 14        | 4:4:4       | planar GBR (3 planes), low-packed                        | `gbrp14le`                      | 14                |
+//! | [`Gbrp16`]                      | 16        | 4:4:4       | planar GBR (3 planes)                                    | `gbrp16le`                      | 16                |
+//! | [`Gbrp10Msb`]                   | 10        | 4:4:4       | planar GBR (3 planes), MSB-packed                        | `gbrp10msble`                   | 10                |
+//! | [`Gbrp12Msb`]                   | 12        | 4:4:4       | planar GBR (3 planes), MSB-packed                        | `gbrp12msble`                   | 12                |
+//! | [`Gbrap`]                       | 8         | 4:4:4       | planar GBR + A (4 planes, source α)                      | `gbrap`                         | —                 |
+//! | [`Gbrap10`]                     | 10        | 4:4:4       | planar GBR+A (4 planes), low-packed, source α            | `gbrap10le`                     | 10                |
+//! | [`Gbrap12`]                     | 12        | 4:4:4       | planar GBR+A (4 planes), low-packed, source α            | `gbrap12le`                     | 12                |
+//! | [`Gbrap14`]                     | 14        | 4:4:4       | planar GBR+A (4 planes), low-packed, source α            | `gbrap14le`                     | 14                |
+//! | [`Gbrap16`]                     | 16        | 4:4:4       | planar GBR+A (4 planes), source α                        | `gbrap16le`                     | 16                |
+//! | [`Gbrap32`]                     | 32        | 4:4:4       | planar GBR+A (4 planes), full u32, source α              | `gbrap32le`                     | 16 (full scale)   |
+//! | [`Gbrpf16`]                     | 16f       | 4:4:4       | planar GBR (3 planes), half-float                        | `gbrpf16le`                     | 16 (full scale)   |
+//! | [`Gbrpf32`]                     | 32f       | 4:4:4       | planar GBR (3 planes), f32                               | `gbrpf32le`                     | 16 (full scale)   |
+//! | [`Gbrapf16`]                    | 16f       | 4:4:4       | planar GBR+A (4 planes), half-float, source α            | `gbrapf16le`                    | 16 (full scale)   |
+//! | [`Gbrapf32`]                    | 32f       | 4:4:4       | planar GBR+A (4 planes), f32, source α                   | `gbrapf32le`                    | 16 (full scale)   |
+//! | [`Rgb24`]                       | 8         | 4:4:4       | packed (R,G,B)                                           | `rgb24`                         | —                 |
+//! | [`Bgr24`]                       | 8         | 4:4:4       | packed (B,G,R)                                           | `bgr24`                         | —                 |
+//! | [`Rgba`]                        | 8         | 4:4:4       | packed (R,G,B,A), source α                               | `rgba`                          | —                 |
+//! | [`Bgra`]                        | 8         | 4:4:4       | packed (B,G,R,A), source α                               | `bgra`                          | —                 |
+//! | [`Argb`]                        | 8         | 4:4:4       | packed (A,R,G,B), source α                               | `argb`                          | —                 |
+//! | [`Abgr`]                        | 8         | 4:4:4       | packed (A,B,G,R), source α                               | `abgr`                          | —                 |
+//! | [`Xrgb`]                        | 8         | 4:4:4       | packed (X,R,G,B), α-as-padding                           | `0rgb`                          | —                 |
+//! | [`Rgbx`]                        | 8         | 4:4:4       | packed (R,G,B,X), α-as-padding                           | `rgb0`                          | —                 |
+//! | [`Xbgr`]                        | 8         | 4:4:4       | packed (X,B,G,R), α-as-padding                           | `0bgr`                          | —                 |
+//! | [`Bgrx`]                        | 8         | 4:4:4       | packed (B,G,R,X), α-as-padding                           | `bgr0`                          | —                 |
+//! | [`Rgb48`]                       | 16        | 4:4:4       | packed u16 triple (R,G,B)                                | `rgb48le`                       | 16                |
+//! | [`Bgr48`]                       | 16        | 4:4:4       | packed u16 triple (B,G,R)                                | `bgr48le`                       | 16                |
+//! | [`Rgba64`]                      | 16        | 4:4:4       | packed u16 quadruple, source α                           | `rgba64le`                      | 16                |
+//! | [`Bgra64`]                      | 16        | 4:4:4       | packed u16 quadruple, source α                           | `bgra64le`                      | 16                |
+//! | [`Rgb96`]                       | 32        | 4:4:4       | packed u32 triple (R,G,B)                                | `rgb96le`                       | 16 (full scale)   |
+//! | [`Rgba128`]                     | 32        | 4:4:4       | packed u32 quadruple, source α                           | `rgba128le`                     | 16 (full scale)   |
+//! | [`X2Rgb10`]                     | 10        | 4:4:4       | packed u32, 2-bit pad (R,G,B)                            | `x2rgb10le`                     | 10                |
+//! | [`X2Bgr10`]                     | 10        | 4:4:4       | packed u32, 2-bit pad (B,G,R)                            | `x2bgr10le`                     | 10                |
+//! | [`Rgb444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (R,G,B)                            | `rgb444le`                      | —                 |
+//! | [`Bgr444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (B,G,R)                            | `bgr444le`                      | —                 |
+//! | [`Rgb555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (R,G,B)                            | `rgb555le`                      | —                 |
+//! | [`Bgr555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (B,G,R)                            | `bgr555le`                      | —                 |
+//! | [`Rgb565`]                      | 5/6/5     | 4:4:4       | packed u16 (R,G,B)                                       | `rgb565le`                      | —                 |
+//! | [`Bgr565`]                      | 5/6/5     | 4:4:4       | packed u16 (B,G,R)                                       | `bgr565le`                      | —                 |
+//! | [`Rgb8`]                        | 3/3/2     | 4:4:4       | packed byte (R,G,B)                                      | `rgb8`                          | —                 |
+//! | [`Bgr8`]                        | 2/3/3     | 4:4:4       | packed byte (B,G,R)                                      | `bgr8`                          | —                 |
+//! | [`Rgb4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (R,G,B)                          | `rgb4_byte`                     | —                 |
+//! | [`Bgr4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (B,G,R)                          | `bgr4_byte`                     | —                 |
+//! | [`Rgb4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (R,G,B)                              | `rgb4`                          | —                 |
+//! | [`Bgr4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (B,G,R)                              | `bgr4`                          | —                 |
+//! | [`Rgbf16`]                      | 16f       | 4:4:4       | packed half-float triple (R,G,B)                         | `rgbf16`                        | 16 (full scale)   |
+//! | [`Rgbf32`]                      | 32f       | 4:4:4       | packed f32 triple (R,G,B)                                | `rgbf32`                        | 16 (full scale)   |
+//! | [`Rgbaf16`]                     | 16f       | 4:4:4       | packed half-float quadruple, source α                    | `rgbaf16le`                     | 16 (full scale)   |
+//! | [`Rgbaf32`]                     | 32f       | 4:4:4       | packed f32 quadruple, source α                           | `rgbaf32le`                     | 16 (full scale)   |
+//! | [`Gray8`]                       | 8         | N/A         | single luma plane                                        | `gray`                          | —                 |
+//! | [`Gray9`]                       | 9         | N/A         | single luma plane, low-packed u16                        | `gray9le`                       | 9                 |
+//! | [`Gray10`]                      | 10        | N/A         | single luma plane, low-packed u16                        | `gray10le`                      | 10                |
+//! | [`Gray12`]                      | 12        | N/A         | single luma plane, low-packed u16                        | `gray12le`                      | 12                |
+//! | [`Gray14`]                      | 14        | N/A         | single luma plane, low-packed u16                        | `gray14le`                      | 14                |
+//! | [`Gray16`]                      | 16        | N/A         | single luma plane                                        | `gray16le`                      | 16                |
+//! | [`Gray32`]                      | 32        | N/A         | single luma plane, u32                                   | `gray32le`                      | 16 (full scale)   |
+//! | [`Grayf16`]                     | 16f       | N/A         | single luma plane, half-float                            | `grayf16le`                     | 16 (full scale)   |
+//! | [`Grayf32`]                     | 32f       | N/A         | single luma plane, f32                                   | `grayf32le`                     | 16 (full scale)   |
+//! | [`Ya8`]                         | 8         | N/A         | packed luma+alpha byte pairs, source α                   | `ya8`                           | 8                 |
+//! | [`Ya16`]                        | 16        | N/A         | packed luma+alpha u16 pairs, source α                    | `ya16le`                        | 16                |
+//! | [`Yaf16`]                       | 16f       | N/A         | packed luma+alpha half-float pairs, source α             | `yaf16le`                       | 16 (full scale)   |
+//! | [`Yaf32`]                       | 32f       | N/A         | packed luma+alpha f32 pairs, source α                    | `yaf32le`                       | 16 (full scale)   |
+//! | [`Monoblack`]                   | 1         | N/A         | 1bpp bitmap, MSB-first, 0=black                          | `monoblack`                     | 8                 |
+//! | [`Monowhite`]                   | 1         | N/A         | 1bpp bitmap, MSB-first, 0=white                          | `monowhite`                     | 8                 |
+//! | [`Pal8`]                        | 8         | N/A         | single index plane + 256-entry palette                   | `pal8`                          | 16 (full scale)   |
+//! | [`Xyz12`](crate::source::Xyz12) | 12        | 4:4:4       | packed CIE XYZ (3 x u16, high-bit-packed: bits `[15:4]`) | `xyz12le` / `xyz12be`           | 16 (full scale)   |
+//!
+//! The last column is the depth of the source's packed `u16` RGB face — what
+//! [`Convert::rgb_u16`] and the sink tier's `with_rgb_u16` write — where it has
+//! one ([`RgbU16Source::RGB_U16_DEPTH`]). An integer source keeps its native
+//! depth, low-packed. "Full scale" is a face the source widens or narrows to
+//! the whole `u16` range (a palette, a 32-bit or float source, XYZ12). `—` has
+//! no `u16` face, and [`Convert::rgb_u16`] on it does not compile. The column
+//! is proved by `every_u16_face_source_implements_rgb_u16_source_at_its_depth`
+//! in the same module.
 //!
 //! [`Xyz12`](crate::source::Xyz12) is the **DCP / digital-cinema** source format. Decoding
 //! it requires a SMPTE ST 428-1 §8 inverse OETF, a 3x3 matrix to one
@@ -568,9 +577,9 @@ pub use walker::BayerOptions;
 pub use walker::{ColorSpec, Walker, YuvOptions};
 
 /// The Tier-0 golden entry point ([`Convert`]) and its sealed [`Source`] /
-/// [`FromSpec`] contract.
+/// [`FromSpec`] / [`RgbU16Source`] contract.
 #[cfg(any(feature = "std", feature = "alloc"))]
-pub use convert::{Convert, FromSpec, Source};
+pub use convert::{Convert, FromSpec, RgbU16Source, Source};
 /// The canonical crate-level error name for the [`Convert`] tier — an alias of
 /// [`MixedSinkerError`](sinker::MixedSinkerError), which remains available under
 /// its original path.

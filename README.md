@@ -73,6 +73,21 @@ fn decode(y: &[u8], u: &[u8], v: &[u8], w: u32, h: u32) -> Result<Vec<u8>, pixon
 }
 ```
 
+The outputs `Convert` writes, any subset at once:
+
+| setter | buffer | sources |
+|---|---|---|
+| `rgb` | packed 8-bit RGB, `w * h * 3` bytes | every source |
+| `rgba` | packed 8-bit RGBA, `w * h * 4` bytes | every source (opaque α where it has none) |
+| `luma` | one 8-bit plane, `w * h` bytes | every source |
+| `hsv` | three 8-bit planes | every source (the setter rides the `yuv-planar` feature) |
+| `rgb_u16` | packed `u16` RGB, `w * h * 3` samples at `RgbU16Source::RGB_U16_DEPTH` | every source with a `u16` face: the high-bit YUV, YUVA, gray, GBR, packed RGB and float formats, `Pal8`, mono and XYZ12 |
+
+`rgb_u16` is the native-depth face: a 10-bit picture's samples come back in
+`0..=1023`. It is what an HDR picture is decoded through before
+`hdr::SdrMapping::map_rgb16` maps it at the precision it has. On a source with
+no `u16` face it does not compile.
+
 `Convert` is the golden path for every supported source format. When you
 need streaming, a custom sink, custom output geometry, or Bayer, drop one
 tier down: assemble a [`MixedSinker`][doc-url] and drive it with the

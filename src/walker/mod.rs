@@ -437,6 +437,20 @@ macro_rules! walker {
       }
     }
   };
+  // Convert-tier rows with a `u16` RGB face — `@rgb_u16(DEPTH)` right after
+  // `@convert`, the depth its sink tier's `with_rgb_u16` writes at. Each forwards
+  // to the row's own arm below with the face in place of the faceless slot, so
+  // the depth is stated once, beside its row. (`@` cannot begin a type, so the
+  // plain arm's `$marker:ty` never tries to parse the sentinel.)
+  (@convert @rgb_u16($depth:literal) @const(cfg: $src_cfg:meta) $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_const_cfg [$depth] $src_cfg; $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
+  (@convert @rgb_u16($depth:literal) @const $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_const [$depth] $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
+  (@convert @rgb_u16($depth:literal) $marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_plain [$depth] $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
   // Convert-tier rows: emit the plain-arm [`Walker`] impl *plus* the sealed
   // [`crate::convert::Source`] impl (frame -> marker -> options -> walker) and
   // its RGBA attach hook, so the frame decodes through the golden `Convert`
@@ -445,8 +459,12 @@ macro_rules! walker {
   // sink type). `walk_mixed` is generic over the resampler `R`: a Convert-tier
   // format's per-format sink implements its sink trait for every `R` (the
   // blanket `impl<R> …Sink for MixedSinker<'_, $marker, R>`), so the direct
-  // `{fmt}_to` body type-checks for all `R` with no extra bound.
+  // `{fmt}_to` body type-checks for all `R` with no extra bound. A row without
+  // `@rgb_u16(…)` has no `u16` RGB face: its slot is uninhabited.
   (@convert $marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_plain [none] $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
+  (@convert_plain [$face:tt] $marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!($marker, $sink, $frame, $opts, |$s, $o, $k| $body);
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -486,7 +504,11 @@ macro_rules! walker {
         sink.set_rgba(buf)?;
         Ok(())
       }
+
+      walker!(@rgb_u16_slot $face; $marker);
     }
+
+    walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [] $frame<'_>);
   };
   // Convert-tier `@const` rows: the endian-const variant of the `@convert` arm.
   // Delegates to the plain `@const` arm for the byte-identical [`Walker`] impl,
@@ -496,6 +518,9 @@ macro_rules! walker {
   // is the full `Fmt<$c>` marker type, so it is reused verbatim for both
   // `Source::Marker` and the `MixedSinker` the walk / attach names.
   (@convert @const $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_const [none] $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
+  (@convert_const [$face:tt] $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!(@const $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -535,7 +560,11 @@ macro_rules! walker {
         sink.set_rgba(buf)?;
         Ok(())
       }
+
+      walker!(@rgb_u16_slot $face; $marker);
     }
+
+    walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [const $c: $cty] $frame<'_, $c>);
   };
   // Convert-tier `@const` rows whose per-format sink impls are generic over the
   // resampler `R` only under an *extra* cfg (`$src_cfg`) narrower than the row's
@@ -548,6 +577,9 @@ macro_rules! walker {
   // there anyway). Used by the packed-float-RGB rows, whose blanket sink impls
   // live under `any(feature = "yuv-planar", feature = "rgb")`.
   (@convert @const(cfg: $src_cfg:meta) $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_const_cfg [none] $src_cfg; $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
+  (@convert_const_cfg [$face:tt] $src_cfg:meta; $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!(@const $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
 
     #[cfg(all(any(feature = "std", feature = "alloc"), $src_cfg))]
@@ -587,7 +619,11 @@ macro_rules! walker {
         sink.set_rgba(buf)?;
         Ok(())
       }
+
+      walker!(@rgb_u16_slot $face; $marker);
     }
+
+    walker!(@rgb_u16_source $face; all(any(feature = "std", feature = "alloc"), $src_cfg); [const $c: $cty] $frame<'_, $c>);
   };
   // Convert-tier `@const_bits` rows: the high-bit variant of the `@convert`
   // arm. Delegates to the plain `@const_bits` arm for the byte-identical
@@ -595,7 +631,8 @@ macro_rules! walker {
   // `$be` is generic; `$bits` is the literal depth spliced as the *leading*
   // const on the frame struct (`$frame<'_, $bits, $be>`), and the marker is
   // `$marker<$be>` — matching the `Walker` impl exactly, so one impl covers LE
-  // (`$be = false`) and BE (`$be = true`).
+  // (`$be = false`) and BE (`$be = true`). Every such row has the `u16` RGB
+  // face at its own depth, so the arm states `$bits` as that depth itself.
   (@convert @const_bits $bits:literal, $be:ident; $marker:ident, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!(@const_bits $bits, $be; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
 
@@ -635,6 +672,57 @@ macro_rules! walker {
       {
         sink.set_rgba(buf)?;
         Ok(())
+      }
+
+      walker!(@rgb_u16_slot $bits; $marker<$be>);
+    }
+
+    walker!(@rgb_u16_source $bits; any(feature = "std", feature = "alloc"); [const $be: bool] $frame<'_, $bits, $be>);
+  };
+  // The `u16` RGB slot of a `Source` impl: the uninhabited `Infallible` where
+  // the row has no face — so `Convert::rgb_u16` cannot have reached it and the
+  // attach is an empty `match` — and the buffer itself where it has one, handed
+  // to the sink tier's `set_rgb_u16`.
+  (@rgb_u16_slot none; $marker:ty) => {
+    type RgbU16Slot<'b> = ::core::convert::Infallible;
+
+    #[inline]
+    fn attach_rgb_u16<'sink, R>(
+      _sink: &mut $crate::sinker::MixedSinker<'sink, $marker, R>,
+      slot: Self::RgbU16Slot<'sink>,
+    ) -> Result<(), $crate::sinker::MixedSinkerError>
+    where
+      R: $crate::resample::Resampler,
+    {
+      match slot {}
+    }
+  };
+  (@rgb_u16_slot $depth:literal; $marker:ty) => {
+    type RgbU16Slot<'b> = &'b mut [u16];
+
+    #[inline]
+    fn attach_rgb_u16<'sink, R>(
+      sink: &mut $crate::sinker::MixedSinker<'sink, $marker, R>,
+      slot: Self::RgbU16Slot<'sink>,
+    ) -> Result<(), $crate::sinker::MixedSinkerError>
+    where
+      R: $crate::resample::Resampler,
+    {
+      sink.set_rgb_u16(slot)?;
+      Ok(())
+    }
+  };
+  // The row's `RgbU16Source` impl, which states its depth: none for a faceless
+  // row; under the same gate as its `Source` impl for a row with the face.
+  (@rgb_u16_source none; $gate:meta; [$($generics:tt)*] $frame:ty) => {};
+  (@rgb_u16_source $depth:literal; $gate:meta; [$($generics:tt)*] $frame:ty) => {
+    #[cfg($gate)]
+    impl<$($generics)*> $crate::convert::RgbU16Source for $frame {
+      const RGB_U16_DEPTH: u32 = $depth;
+
+      #[inline]
+      fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_> {
+        buf
       }
     }
   };
@@ -1246,7 +1334,7 @@ impl BayerOptions {
 // `BE` is the wire byte order.
 #[cfg(feature = "xyz")]
 #[cfg_attr(docsrs, doc(cfg(feature = "xyz")))]
-walker!(@convert @const BE: bool; Xyz12<BE>, Xyz12Sink, Xyz12Frame, (),
+walker!(@convert @rgb_u16(16) @const BE: bool; Xyz12<BE>, Xyz12Sink, Xyz12Frame, (),
   |src, opts, sink| { let _ = opts; xyz12_to::<BE, _>(src, sink) });
 
 // Bayer (8-bit) — the mosaic pattern, demosaic, white balance, and
@@ -1295,7 +1383,7 @@ walker!(@const2 BITS: u32, BE: bool; Bayer16, BayerSink16, BayerFrame16, BayerOp
 // [`Options`](Walker::Options) is the unit type.
 #[cfg(feature = "mono")]
 #[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
-walker!(@convert Pal8, Pal8Sink, Pal8Frame, (), |src, _opts, sink| pal8_to(
+walker!(@convert @rgb_u16(16) Pal8, Pal8Sink, Pal8Frame, (), |src, _opts, sink| pal8_to(
   src, sink
 ));
 
@@ -1305,7 +1393,7 @@ walker!(@convert Pal8, Pal8Sink, Pal8Frame, (), |src, _opts, sink| pal8_to(
 // `monoblack_to` walker takes).
 #[cfg(feature = "mono")]
 #[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
-walker!(@convert
+walker!(@convert @rgb_u16(8)
   Monoblack,
   MonoblackSink,
   MonoblackFrame,
@@ -1317,7 +1405,7 @@ walker!(@convert
 // same `full_range` / `matrix` knobs, so it reuses [`YuvOptions`] too.
 #[cfg(feature = "mono")]
 #[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
-walker!(@convert
+walker!(@convert @rgb_u16(8)
   Monowhite,
   MonowhiteSink,
   MonowhiteFrame,
@@ -1532,7 +1620,7 @@ walker!(@convert Nv42, Nv42Sink, Nv42Frame, YuvOptions, |src, opts, sink| {
 // so one impl covers LE + BE.
 #[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-semi-planar")))]
-walker!(@convert @const BE: bool; Nv20<BE>, Nv20Sink, Nv20Frame, YuvOptions,
+walker!(@convert @rgb_u16(10) @const BE: bool; Nv20<BE>, Nv20Sink, Nv20Frame, YuvOptions,
   |src, opts, sink| nv20_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Semi-planar YUV, high-bit (P0xx/P2xx/P4xx; LE + BE via `_to_endian`)
@@ -1668,7 +1756,7 @@ walker!(@convert Vyu444, Vyu444Sink, Vyu444Frame, YuvOptions, |src, opts, sink| 
 });
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-walker!(@convert V30X, V30XSink, V30XFrame, YuvOptions, |src, opts, sink| {
+walker!(@convert @rgb_u16(10) V30X, V30XSink, V30XFrame, YuvOptions, |src, opts, sink| {
   v30x_to(src, opts.full_range(), sink)
 });
 
@@ -1681,19 +1769,19 @@ walker!(@convert V30X, V30XSink, V30XFrame, YuvOptions, |src, opts, sink| {
 // sibling (X slot padding); `Ayuv64` is 16-bit + source α.
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-walker!(@convert @const BE: bool; V410<BE>, V410Sink, V410Frame, YuvOptions,
+walker!(@convert @rgb_u16(10) @const BE: bool; V410<BE>, V410Sink, V410Frame, YuvOptions,
   |src, opts, sink| v410_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-walker!(@convert @const BE: bool; Xv36<BE>, Xv36Sink, Xv36Frame, YuvOptions,
+walker!(@convert @rgb_u16(12) @const BE: bool; Xv36<BE>, Xv36Sink, Xv36Frame, YuvOptions,
   |src, opts, sink| xv36_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-walker!(@convert @const BE: bool; Xv48<BE>, Xv48Sink, Xv48Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Xv48<BE>, Xv48Sink, Xv48Frame, YuvOptions,
   |src, opts, sink| xv48_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-walker!(@convert @const BE: bool; Ayuv64<BE>, Ayuv64Sink, Ayuv64Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Ayuv64<BE>, Ayuv64Sink, Ayuv64Frame, YuvOptions,
   |src, opts, sink| ayuv64_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ===== Packed YUV 4:2:2 10-bit `V210` ==================================
@@ -1706,7 +1794,7 @@ walker!(@convert @const BE: bool; Ayuv64<BE>, Ayuv64Sink, Ayuv64Frame, YuvOption
 // reuses [`YuvOptions`].
 #[cfg(feature = "v210")]
 #[cfg_attr(docsrs, doc(cfg(feature = "v210")))]
-walker!(@convert @const BE: bool; V210<BE>, V210Sink, V210Frame, YuvOptions,
+walker!(@convert @rgb_u16(10) @const BE: bool; V210<BE>, V210Sink, V210Frame, YuvOptions,
   |src, opts, sink| v210_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Planar YUVA, 8-bit (alpha read inside `{fmt}_to`, not an Option) --
@@ -1870,19 +1958,19 @@ walker!(@convert Bgrx, BgrxSink, BgrxFrame, YuvOptions, |src, opts, sink| {
 // covers both LE (`BE = false`) and BE (`BE = true`).
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; Rgb48<BE>, Rgb48Sink, Rgb48Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Rgb48<BE>, Rgb48Sink, Rgb48Frame, YuvOptions,
   |src, opts, sink| rgb48_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; Bgr48<BE>, Bgr48Sink, Bgr48Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Bgr48<BE>, Bgr48Sink, Bgr48Frame, YuvOptions,
   |src, opts, sink| bgr48_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; Rgba64<BE>, Rgba64Sink, Rgba64Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Rgba64<BE>, Rgba64Sink, Rgba64Frame, YuvOptions,
   |src, opts, sink| rgba64_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; Bgra64<BE>, Bgra64Sink, Bgra64Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Bgra64<BE>, Bgra64Sink, Bgra64Frame, YuvOptions,
   |src, opts, sink| bgra64_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Packed RGB, 32-bit per channel (BE-generic marker; LE + BE) -------
@@ -1892,12 +1980,12 @@ walker!(@convert @const BE: bool; Bgra64<BE>, Bgra64Sink, Bgra64Frame, YuvOption
 // `rgb96_to_endian::<_, BE>`; one impl covers both LE and BE.
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; Rgb96<BE>, Rgb96Sink, Rgb96Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Rgb96<BE>, Rgb96Sink, Rgb96Frame, YuvOptions,
   |src, opts, sink| rgb96_to_endian::<_, BE>(src, opts.full_range(), sink));
 // `Rgba128` (`R, G, B, A`, real alpha) is the full-bit `u32` twin of `Rgba64`.
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; Rgba128<BE>, Rgba128Sink, Rgba128Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Rgba128<BE>, Rgba128Sink, Rgba128Frame, YuvOptions,
   |src, opts, sink| rgba128_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Packed RGB, 10-bit 2-10-10-10 (BE-generic marker; LE + BE) --------
@@ -1908,11 +1996,11 @@ walker!(@convert @const BE: bool; Rgba128<BE>, Rgba128Sink, Rgba128Frame, YuvOpt
 // to `{fmt}_to_endian::<_, BE>`; one impl covers both LE and BE.
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; X2Rgb10<BE>, X2Rgb10Sink, X2Rgb10Frame, YuvOptions,
+walker!(@convert @rgb_u16(10) @const BE: bool; X2Rgb10<BE>, X2Rgb10Sink, X2Rgb10Frame, YuvOptions,
   |src, opts, sink| x2rgb10_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "rgb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
-walker!(@convert @const BE: bool; X2Bgr10<BE>, X2Bgr10Sink, X2Bgr10Frame, YuvOptions,
+walker!(@convert @rgb_u16(10) @const BE: bool; X2Bgr10<BE>, X2Bgr10Sink, X2Bgr10Frame, YuvOptions,
   |src, opts, sink| x2bgr10_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Packed float RGB (Rgbf16 / Rgbf32; LE + BE via `_to_endian`) ------
@@ -1931,11 +2019,11 @@ walker!(@convert @const BE: bool; X2Bgr10<BE>, X2Bgr10Sink, X2Bgr10Frame, YuvOpt
 // alone these stay Walker/Tier-1-only.
 #[cfg(feature = "rgb-float")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
-walker!(@convert @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbf16<BE>, Rgbf16Sink, Rgbf16Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbf16<BE>, Rgbf16Sink, Rgbf16Frame, YuvOptions,
   |src, opts, sink| rgbf16_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "rgb-float")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
-walker!(@convert @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbf32<BE>, Rgbf32Sink, Rgbf32Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbf32<BE>, Rgbf32Sink, Rgbf32Frame, YuvOptions,
   |src, opts, sink| rgbf32_to_endian::<_, BE>(src, opts.full_range(), sink));
 // Alpha-bearing twins (`Rgbaf16` / `Rgbaf32`): same `@const BE` arm over the
 // trailing-`BE` frames, delegating to `{fmt}_to_endian::<_, BE>`. The source
@@ -1946,11 +2034,11 @@ walker!(@convert @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: b
 // under `rgb-float` alone.
 #[cfg(feature = "rgb-float")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
-walker!(@convert @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbaf16<BE>, Rgbaf16Sink, Rgbaf16Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbaf16<BE>, Rgbaf16Sink, Rgbaf16Frame, YuvOptions,
   |src, opts, sink| rgbaf16_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "rgb-float")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
-walker!(@convert @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbaf32<BE>, Rgbaf32Sink, Rgbaf32Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const(cfg: any(feature = "rgb", feature = "yuv-planar")) BE: bool; Rgbaf32<BE>, Rgbaf32Sink, Rgbaf32Frame, YuvOptions,
   |src, opts, sink| rgbaf32_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Legacy packed RGB (byte-order-fixed LE; plain arm) ----------------
@@ -2074,7 +2162,7 @@ walker!(@convert
 );
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert
+walker!(@convert @rgb_u16(8)
   Ya8,
   Ya8Sink,
   Ya8Frame,
@@ -2108,17 +2196,17 @@ walker!(@convert @const_bits 14, BE; Gray14, Gray14Sink, GrayNFrame, YuvOptions,
 // shape as XYZ12 / Rgb48) and delegate to `{fmt}_to_endian::<_, BE>`.
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Gray16<BE>, Gray16Sink, Gray16Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Gray16<BE>, Gray16Sink, Gray16Frame, YuvOptions,
   |src, opts, sink| gray16_to_endian::<_, BE>(src, opts.full_range(), sink));
 // `Gray32` is the full-bit integer twin of `Gray16` (one `u32` luma plane);
 // same `@const BE` arm, delegating to `gray32_to_endian::<_, BE>`.
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Gray32<BE>, Gray32Sink, Gray32Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Gray32<BE>, Gray32Sink, Gray32Frame, YuvOptions,
   |src, opts, sink| gray32_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,
   |src, opts, sink| ya16_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Gray, float-luma Grayf16 / Grayf32 (BE-generic marker; LE + BE) --------
@@ -2130,11 +2218,11 @@ walker!(@convert @const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,
 // `Grayf32`; its outputs widen each `f16` to `f32` before the same conversion.
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Grayf16<BE>, Grayf16Sink, Grayf16Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Grayf16<BE>, Grayf16Sink, Grayf16Frame, YuvOptions,
   |src, opts, sink| grayf16_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Grayf32<BE>, Grayf32Sink, Grayf32Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Grayf32<BE>, Grayf32Sink, Grayf32Frame, YuvOptions,
   |src, opts, sink| grayf32_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Gray, float-luma + alpha Yaf16 / Yaf32 (BE-generic marker; LE + BE) -----
@@ -2145,11 +2233,11 @@ walker!(@convert @const BE: bool; Grayf32<BE>, Grayf32Sink, Grayf32Frame, YuvOpt
 // `Options` knob, so they reuse [`YuvOptions`] like the other gray families.
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Yaf16<BE>, Yaf16Sink, Yaf16Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Yaf16<BE>, Yaf16Sink, Yaf16Frame, YuvOptions,
   |src, opts, sink| yaf16_to_endian::<_, BE>(src, opts.full_range(), sink));
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
-walker!(@convert @const BE: bool; Yaf32<BE>, Yaf32Sink, Yaf32Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Yaf32<BE>, Yaf32Sink, Yaf32Frame, YuvOptions,
   |src, opts, sink| yaf32_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ===== Planar GBR families =============================================
@@ -2225,7 +2313,7 @@ walker!(@convert @const_bits 16, BE; Gbrap16, Gbrap16Sink, GbrapHighBitFrame, Yu
 // `gbrap32_to_endian::<_, BE>` (same shape as `Rgba128` / `Gray32`).
 #[cfg(feature = "gbr")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
-walker!(@convert @const BE: bool; Gbrap32<BE>, Gbrap32Sink, Gbrap32Frame, YuvOptions,
+walker!(@convert @rgb_u16(16) @const BE: bool; Gbrap32<BE>, Gbrap32Sink, Gbrap32Frame, YuvOptions,
   |src, opts, sink| gbrap32_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Planar GBR, MSB-aligned high-bit (BE-generic marker; LE + BE) -----
@@ -2254,17 +2342,17 @@ walker!(@convert @const_bits 12, BE; Gbrp12Msb, Gbrp12MsbSink, GbrpMsbFrame, Yuv
 // the RGBA outputs only, never an `Options` knob.
 #[cfg(feature = "gbr")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
-walker!(@convert @const BE: bool; Gbrpf16<BE>, Gbrpf16Sink, Gbrpf16Frame, (),
+walker!(@convert @rgb_u16(16) @const BE: bool; Gbrpf16<BE>, Gbrpf16Sink, Gbrpf16Frame, (),
   |src, _opts, sink| gbrpf16_to_endian::<_, BE>(src, sink));
 #[cfg(feature = "gbr")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
-walker!(@convert @const BE: bool; Gbrpf32<BE>, Gbrpf32Sink, Gbrpf32Frame, (),
+walker!(@convert @rgb_u16(16) @const BE: bool; Gbrpf32<BE>, Gbrpf32Sink, Gbrpf32Frame, (),
   |src, _opts, sink| gbrpf32_to_endian::<_, BE>(src, sink));
 #[cfg(feature = "gbr")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
-walker!(@convert @const BE: bool; Gbrapf16<BE>, Gbrapf16Sink, Gbrapf16Frame, (),
+walker!(@convert @rgb_u16(16) @const BE: bool; Gbrapf16<BE>, Gbrapf16Sink, Gbrapf16Frame, (),
   |src, _opts, sink| gbrapf16_to_endian::<_, BE>(src, sink));
 #[cfg(feature = "gbr")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
-walker!(@convert @const BE: bool; Gbrapf32<BE>, Gbrapf32Sink, Gbrapf32Frame, (),
+walker!(@convert @rgb_u16(16) @const BE: bool; Gbrapf32<BE>, Gbrapf32Sink, Gbrapf32Frame, (),
   |src, _opts, sink| gbrapf32_to_endian::<_, BE>(src, sink));

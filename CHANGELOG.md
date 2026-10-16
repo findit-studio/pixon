@@ -12,6 +12,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
+## 0.7.2 — unreleased
+
+Additive: the `Convert` tier writes the `u16` RGB face, so a 10- or 12-bit
+picture can be decoded, and mapped from HDR, at the precision it has. No
+existing API changes shape or behavior.
+
+### Added
+
+- **`Convert::rgb_u16` and `RgbU16Source`.** Until now `Convert`'s only RGB
+  face was 8-bit, and the `u16` face was on the sink tier alone
+  (`MixedSinker::with_rgb_u16`, per format). A PQ or HLG picture at 10 or 12
+  bits therefore lost its precision before `hdr::SdrMapping` saw it, and its
+  dark gradients banded.
+  - `rgb_u16` attaches a packed `u16` RGB buffer and writes the sink tier's
+    face, byte for byte, at native size and through `resize` / `resize_with`.
+    It combines with every other output.
+  - `RgbU16Source::RGB_U16_DEPTH` states the face's depth: every sample lies
+    in `0..=(1 << RGB_U16_DEPTH) - 1`. This is the `bits` that
+    `SdrMapping::map_rgb16` takes.
+- **The face mirrors the sink tier exactly.** It covers all 95 source formats
+  whose sink has `with_rgb_u16`:
+  - an integer source at its native depth, low-packed (a P010 picture's
+    samples in `0..=1023`);
+  - 16 for a face widened or narrowed to the full `u16` range: `Pal8`, the
+    32-bit integer and float formats, and XYZ12;
+  - 8 for the 1-bit and 8-bit gray sources.
+
+  An 8-bit YUV, RGB, YUVA or GBR source has no `u16` face. `rgb_u16` on it
+  does not compile, as `with_rgb_u16` does not on its sink. The crate docs'
+  format table gains the depth as a column.
+- **No new kernels.** `Convert` forwards to the sink tier's face. A hidden slot
+  on the sealed `Source` holds the buffer as the face's own type where it
+  exists, and as an uninhabited one where it does not. So `run` attaches it
+  with no runtime refusal, and the builder's type does not change: a caller
+  can attach the face conditionally.
+
+### Internal
+
+- **The walker table states each depth once, beside its row.** A
+  `@const_bits` row's depth is its own `BITS`. Every other row with the face
+  carries `@rgb_u16(DEPTH)`.
+- **Laws** (`src/convert/rgb_u16_tests.rs`, and the whole-table depth proof in
+  `source_coverage.rs`):
+  - parity with the hand-assembled sink for one source of every walker arm and
+    face family, at native size, area-resized and Lanczos-3-resized;
+  - each family's depth, with white at full depth;
+  - SIMD against the scalar reference at every width from 1 to 72;
+  - BT.2020 goldens at 10 and 12 bits, limited and full range, each held within
+    one code of an `f64` reference;
+  - a 10-bit PQ ramp that keeps more distinct SDR codes through the native
+    face than through the 8-bit one.
+
 ## 0.7.1 — 2026-10-15
 
 Additive: a public, analysis-grade HDR → SDR tier, and the BT.2100 curves it

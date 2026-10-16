@@ -16,6 +16,11 @@
 //! - **Banding.** A 10-bit PQ ramp keeps more distinct SDR codes through the
 //!   native face and [`SdrMapping::map_rgb16`] than through the 8-bit face and
 //!   [`SdrMapping::map_rgb8`] — the reason the face exists at this tier.
+//!
+//! Every sample a law means is written little-endian ([`le`]), so it reads the
+//! same on a big-endian host. Under Miri, whose float intrinsics carry a few
+//! ULP of noise, parity and SIMD hold within one code ([`assert_alike`]) and
+//! the banding counts stand unpinned.
 
 use crate::{
   ChromaLocation, ColorInfo, ColorMatrix, ColorSpec, DynamicRange, PixelFormat, Primaries,
@@ -45,27 +50,57 @@ impl Samples {
   }
 
   /// `n` samples in `0..=max`.
-  fn u16s(&mut self, n: usize, max: u32) -> Vec<u16> {
+  fn u16s(&mut self, n: usize, max: u32) -> std::vec::Vec<u16> {
     (0..n).map(|_| (self.next() % (max + 1)) as u16).collect()
   }
 
   /// `n` bytes.
-  fn u8s(&mut self, n: usize) -> Vec<u8> {
+  fn u8s(&mut self, n: usize) -> std::vec::Vec<u8> {
     (0..n).map(|_| self.next() as u8).collect()
   }
 
   /// `n` words.
-  fn u32s(&mut self, n: usize) -> Vec<u32> {
+  fn u32s(&mut self, n: usize) -> std::vec::Vec<u32> {
     (0..n)
       .map(|_| (self.next() << 16) ^ (self.next() & 0xFFFF))
       .collect()
   }
 
   /// `n` floats in `[0, 1.25]`, so the face's clamp is reached.
-  fn f32s(&mut self, n: usize) -> Vec<f32> {
+  fn f32s(&mut self, n: usize) -> std::vec::Vec<f32> {
     (0..n)
       .map(|_| (self.next() % 1251) as f32 / 1000.0)
       .collect()
+  }
+}
+
+/// `samples` as a little-endian frame holds them, each one's low byte first
+/// whatever the host's order: the values a law means are the values the frame
+/// reads, on a big-endian host too.
+fn le(samples: &[u16]) -> std::vec::Vec<u16> {
+  samples.iter().map(|sample| sample.to_le()).collect()
+}
+
+/// [`le`] for `f32` samples.
+fn le_f32(samples: &[f32]) -> std::vec::Vec<f32> {
+  samples
+    .iter()
+    .map(|sample| f32::from_bits(sample.to_bits().to_le()))
+    .collect()
+}
+
+/// Asserts two faces of one picture alike: equal sample for sample on real
+/// hardware; under Miri, which adds a few ULP of noise to every float intrinsic
+/// call (XYZ's gamma among them), each sample within one code.
+fn assert_alike(a: &[u16], b: &[u16], label: core::fmt::Arguments<'_>) {
+  if cfg!(miri) {
+    assert_eq!(a.len(), b.len(), "{label}: lengths");
+    assert!(
+      a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 1),
+      "{label}: {a:?} against {b:?}"
+    );
+  } else {
+    assert_eq!(a, b, "{label}");
   }
 }
 
@@ -107,30 +142,30 @@ macro_rules! assert_rgb_u16_parity {
     let spec = spec_2020(DynamicRange::Limited);
     let (w, h, ow, oh): (usize, usize, usize, usize) = ($w, $h, $ow, $oh);
 
-    let mut tier0 = vec![0u16; w * h * 3];
+    let mut tier0 = std::vec![0u16; w * h * 3];
     let ran0 = Convert::from(&frame)
       .spec(spec.clone())
       .rgb_u16(&mut tier0)
       .run();
-    let mut tier1 = vec![0u16; w * h * 3];
+    let mut tier1 = std::vec![0u16; w * h * 3];
     let ran1 = MixedSinker::<<$frame_ty as Source>::Marker>::new(w, h)
       .with_rgb_u16(&mut tier1)
       .and_then(|mut sink| walk(&frame, &spec, &mut sink));
     assert_eq!(ran0, ran1, "{} native: result", $label);
-    assert_eq!(tier0, tier1, "{} native: samples", $label);
+    assert_alike(&tier0, &tier1, format_args!("{} native: samples", $label));
     assert!(
       tier1.iter().any(|&s| s != 0),
       "{} native: a blank picture",
       $label
     );
 
-    let mut tier0 = vec![0u16; ow * oh * 3];
+    let mut tier0 = std::vec![0u16; ow * oh * 3];
     let ran0 = Convert::from(&frame)
       .spec(spec.clone())
       .resize(ow, oh)
       .rgb_u16(&mut tier0)
       .run();
-    let mut tier1 = vec![0u16; ow * oh * 3];
+    let mut tier1 = std::vec![0u16; ow * oh * 3];
     let ran1 = MixedSinker::<<$frame_ty as Source>::Marker, AreaResampler>::with_resampler(
       w,
       h,
@@ -139,15 +174,15 @@ macro_rules! assert_rgb_u16_parity {
     .and_then(|sink| sink.with_rgb_u16(&mut tier1))
     .and_then(|mut sink| walk(&frame, &spec, &mut sink));
     assert_eq!(ran0, ran1, "{} area: result", $label);
-    assert_eq!(tier0, tier1, "{} area: samples", $label);
+    assert_alike(&tier0, &tier1, format_args!("{} area: samples", $label));
 
-    let mut tier0 = vec![0u16; ow * oh * 3];
+    let mut tier0 = std::vec![0u16; ow * oh * 3];
     let ran0 = Convert::from(&frame)
       .spec(spec.clone())
       .resize_with(Lanczos3, ow, oh)
       .rgb_u16(&mut tier0)
       .run();
-    let mut tier1 = vec![0u16; ow * oh * 3];
+    let mut tier1 = std::vec![0u16; ow * oh * 3];
     let ran1 =
       MixedSinker::<<$frame_ty as Source>::Marker, FilteredResampler<Lanczos3>>::with_resampler(
         w,
@@ -157,7 +192,7 @@ macro_rules! assert_rgb_u16_parity {
       .and_then(|sink| sink.with_rgb_u16(&mut tier1))
       .and_then(|mut sink| walk(&frame, &spec, &mut sink));
     assert_eq!(ran0, ran1, "{} filtered: result", $label);
-    assert_eq!(tier0, tier1, "{} filtered: samples", $label);
+    assert_alike(&tier0, &tier1, format_args!("{} filtered: samples", $label));
   }};
 }
 
@@ -166,7 +201,7 @@ macro_rules! assert_rgb_u16_parity {
 fn assert_white_at_depth<Fr: RgbU16Source>(label: &str, frame: &Fr, reaches: bool) {
   let (w, h) = frame.dimensions();
   let max = (1u32 << Fr::RGB_U16_DEPTH) - 1;
-  let mut rgb = vec![0u16; w * h * 3];
+  let mut rgb = std::vec![0u16; w * h * 3];
   Convert::from(frame)
     .spec(spec_2020(DynamicRange::Full))
     .rgb_u16(&mut rgb)
@@ -188,20 +223,20 @@ fn assert_white_at_depth<Fr: RgbU16Source>(label: &str, frame: &Fr, reaches: boo
 fn assert_simd_is_scalar<Fr: RgbU16Source>(label: &str, frame: &Fr) {
   let (w, h) = frame.dimensions();
   let spec = spec_2020(DynamicRange::Limited);
-  let mut simd = vec![0u16; w * h * 3];
+  let mut simd = std::vec![0u16; w * h * 3];
   Convert::from(frame)
     .spec(spec.clone())
     .rgb_u16(&mut simd)
     .run()
     .unwrap();
-  let mut scalar = vec![0u16; w * h * 3];
+  let mut scalar = std::vec![0u16; w * h * 3];
   Convert::from(frame)
     .spec(spec)
     .simd(false)
     .rgb_u16(&mut scalar)
     .run()
     .unwrap();
-  assert_eq!(simd, scalar, "{label} at width {w}");
+  assert_alike(&simd, &scalar, format_args!("{label} at width {w}"));
 }
 
 /// Every width the SIMD laws sweep: past AVX-512's widest `u16` block twice,
@@ -231,8 +266,8 @@ fn parity_yuv420p10() {
 #[test]
 fn parity_p010() {
   let mut s = Samples::new(2);
-  let y: Vec<u16> = s.u16s(8 * 4, 1023).into_iter().map(|c| c << 6).collect();
-  let uv: Vec<u16> = s.u16s(8 * 2, 1023).into_iter().map(|c| c << 6).collect();
+  let y: std::vec::Vec<u16> = s.u16s(8 * 4, 1023).into_iter().map(|c| c << 6).collect();
+  let uv: std::vec::Vec<u16> = s.u16s(8 * 2, 1023).into_iter().map(|c| c << 6).collect();
   assert_rgb_u16_parity!(
     "p010",
     crate::frame::P010Frame<'_>,
@@ -258,7 +293,7 @@ fn parity_nv20() {
 #[test]
 fn parity_y210() {
   let mut s = Samples::new(4);
-  let packed: Vec<u16> = s
+  let packed: std::vec::Vec<u16> = s
     .u16s(8 * 2 * 4, 1023)
     .into_iter()
     .map(|c| c << 6)
@@ -288,7 +323,7 @@ fn parity_v210() {
 #[test]
 fn parity_xv36() {
   let mut s = Samples::new(6);
-  let packed: Vec<u16> = s
+  let packed: std::vec::Vec<u16> = s
     .u16s(6 * 4 * 4, 4095)
     .into_iter()
     .map(|c| c << 4)
@@ -318,7 +353,7 @@ fn parity_v30x() {
 #[test]
 fn parity_yuva444p10() {
   let mut s = Samples::new(8);
-  let planes: Vec<Vec<u16>> = (0..4).map(|_| s.u16s(6 * 4, 1023)).collect();
+  let planes: std::vec::Vec<std::vec::Vec<u16>> = (0..4).map(|_| s.u16s(6 * 4, 1023)).collect();
   assert_rgb_u16_parity!(
     "yuva444p10",
     crate::frame::Yuva444p10Frame<'_>,
@@ -425,7 +460,7 @@ fn parity_ya8() {
 #[test]
 fn parity_gbrp10() {
   let mut s = Samples::new(16);
-  let planes: Vec<Vec<u16>> = (0..3).map(|_| s.u16s(6 * 4, 1023)).collect();
+  let planes: std::vec::Vec<std::vec::Vec<u16>> = (0..3).map(|_| s.u16s(6 * 4, 1023)).collect();
   assert_rgb_u16_parity!(
     "gbrp10",
     crate::frame::Gbrp10Frame<'_>,
@@ -438,7 +473,7 @@ fn parity_gbrp10() {
 #[test]
 fn parity_gbrpf32() {
   let mut s = Samples::new(17);
-  let planes: Vec<Vec<f32>> = (0..3).map(|_| s.f32s(6 * 4)).collect();
+  let planes: std::vec::Vec<std::vec::Vec<f32>> = (0..3).map(|_| s.f32s(6 * 4)).collect();
   assert_rgb_u16_parity!(
     "gbrpf32",
     crate::frame::Gbrpf32Frame<'_, false>,
@@ -454,7 +489,7 @@ fn parity_gbrpf32() {
 #[test]
 fn parity_xyz12() {
   let mut s = Samples::new(18);
-  let px: Vec<u16> = s
+  let px: std::vec::Vec<u16> = s
     .u16s(6 * 3 * 4, 4095)
     .into_iter()
     .map(|c| c << 4)
@@ -503,7 +538,7 @@ fn parity_monoblack() {
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn depth_yuv420p10() {
-  let (y, uv) = ([1023u16; 8 * 2], [512u16; 4]);
+  let (y, uv) = (le(&[1023u16; 8 * 2]), le(&[512u16; 4]));
   let frame = crate::frame::Yuv420p10Frame::new(&y, &uv, &uv, 8, 2, 8, 4, 4);
   assert_white_at_depth("yuv420p10", &frame, true);
 }
@@ -511,7 +546,7 @@ fn depth_yuv420p10() {
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn depth_yuv444p12() {
-  let (y, uv) = ([4095u16; 6 * 2], [2048u16; 6 * 2]);
+  let (y, uv) = (le(&[4095u16; 6 * 2]), le(&[2048u16; 6 * 2]));
   let frame = crate::frame::Yuv444p12Frame::new(&y, &uv, &uv, 6, 2, 6, 6, 6);
   assert_white_at_depth("yuv444p12", &frame, true);
 }
@@ -519,8 +554,8 @@ fn depth_yuv444p12() {
 #[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn depth_p010() {
-  let y = [1023u16 << 6; 8 * 2];
-  let uv = [512u16 << 6; 8];
+  let y = le(&[1023u16 << 6; 8 * 2]);
+  let uv = le(&[512u16 << 6; 8]);
   let frame = crate::frame::P010Frame::new(&y, &uv, 8, 2, 8, 8);
   assert_white_at_depth("p010", &frame, true);
 }
@@ -528,7 +563,7 @@ fn depth_p010() {
 #[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn depth_nv20() {
-  let (y, uv) = ([1023u16; 8 * 2], [512u16; 8 * 2]);
+  let (y, uv) = (le(&[1023u16; 8 * 2]), le(&[512u16; 8 * 2]));
   let frame = crate::frame::Nv20Frame::<false>::new(&y, &uv, 8, 2, 8, 8);
   assert_white_at_depth("nv20", &frame, true);
 }
@@ -537,11 +572,11 @@ fn depth_nv20() {
 #[test]
 fn depth_y212() {
   // Y U Y V, each 12-bit sample high-packed.
-  let packed: Vec<u16> = [4095u16, 2048, 4095, 2048]
+  let packed: std::vec::Vec<u16> = [4095u16, 2048, 4095, 2048]
     .iter()
     .cycle()
     .take(8 * 2 * 2)
-    .map(|&c| c << 4)
+    .map(|&c| (c << 4).to_le())
     .collect();
   let frame = crate::frame::Y2xxFrame::<12, false>::new(&packed, 8, 2, 16);
   assert_white_at_depth("y212", &frame, true);
@@ -551,11 +586,11 @@ fn depth_y212() {
 #[test]
 fn depth_xv48() {
   // U Y V A, 16-bit each.
-  let packed: Vec<u16> = [32768u16, 65535, 32768, 65535]
+  let packed: std::vec::Vec<u16> = [32768u16, 65535, 32768, 65535]
     .iter()
     .cycle()
     .take(6 * 4 * 2)
-    .copied()
+    .map(|c| c.to_le())
     .collect();
   let frame = crate::frame::Xv48Frame::<false>::new(&packed, 6, 2, 24);
   assert_white_at_depth("xv48", &frame, true);
@@ -564,7 +599,11 @@ fn depth_xv48() {
 #[cfg(feature = "yuva")]
 #[test]
 fn depth_yuva420p16() {
-  let (y, uv, a) = ([65535u16; 8 * 2], [32768u16; 4], [65535u16; 8 * 2]);
+  let (y, uv, a) = (
+    le(&[65535u16; 8 * 2]),
+    le(&[32768u16; 4]),
+    le(&[65535u16; 8 * 2]),
+  );
   let frame =
     crate::frame::Yuva420pFrame16::<16, false>::try_new(&y, &uv, &uv, &a, 8, 2, 8, 4, 4, 8)
       .unwrap();
@@ -575,7 +614,7 @@ fn depth_yuva420p16() {
 #[test]
 fn depth_x2rgb10() {
   let words = [0x3FFF_FFFFu32; 6 * 2];
-  let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+  let bytes: std::vec::Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
   let frame = crate::frame::X2Rgb10Frame::<false>::new(&bytes, 6, 2, 24);
   assert_white_at_depth("x2rgb10", &frame, true);
 }
@@ -591,7 +630,7 @@ fn depth_rgba128() {
 #[cfg(all(feature = "rgb-float", any(feature = "rgb", feature = "yuv-planar")))]
 #[test]
 fn depth_rgbaf32() {
-  let px = [1.0f32; 6 * 4 * 2];
+  let px = le_f32(&[1.0f32; 6 * 4 * 2]);
   let frame = crate::frame::Rgbaf32Frame::<false>::new(&px, 6, 2, 24);
   assert_white_at_depth("rgbaf32", &frame, true);
 }
@@ -599,7 +638,7 @@ fn depth_rgbaf32() {
 #[cfg(feature = "gray")]
 #[test]
 fn depth_gray14() {
-  let y = [16383u16; 6 * 2];
+  let y = le(&[16383u16; 6 * 2]);
   let frame = crate::frame::GrayNFrame::<14, false>::new(&y, 6, 2, 6);
   assert_white_at_depth("gray14", &frame, true);
 }
@@ -607,7 +646,7 @@ fn depth_gray14() {
 #[cfg(feature = "gray")]
 #[test]
 fn depth_ya16() {
-  let packed = [65535u16; 6 * 2 * 2];
+  let packed = le(&[65535u16; 6 * 2 * 2]);
   let frame = crate::frame::Ya16Frame::<false>::new(&packed, 6, 2, 12);
   assert_white_at_depth("ya16", &frame, true);
 }
@@ -615,7 +654,7 @@ fn depth_ya16() {
 #[cfg(feature = "gray")]
 #[test]
 fn depth_grayf32() {
-  let y = [1.0f32; 6 * 2];
+  let y = le_f32(&[1.0f32; 6 * 2]);
   let frame = crate::frame::Grayf32Frame::<false>::new(&y, 6, 2, 6);
   assert_white_at_depth("grayf32", &frame, true);
 }
@@ -631,7 +670,7 @@ fn depth_ya8() {
 #[cfg(feature = "gbr")]
 #[test]
 fn depth_gbrap16() {
-  let plane = [65535u16; 6 * 2];
+  let plane = le(&[65535u16; 6 * 2]);
   let frame = crate::frame::GbrapHighBitFrame::<16, false>::try_new(
     &plane, &plane, &plane, &plane, 6, 2, 6, 6, 6, 6,
   )
@@ -642,7 +681,7 @@ fn depth_gbrap16() {
 #[cfg(feature = "gbr")]
 #[test]
 fn depth_gbrp12msb() {
-  let plane = [4095u16 << 4; 6 * 2];
+  let plane = le(&[4095u16 << 4; 6 * 2]);
   let frame =
     crate::frame::GbrpMsbFrame::<12, false>::try_new(&plane, &plane, &plane, 6, 2, 6, 6, 6)
       .unwrap();
@@ -684,7 +723,7 @@ fn depth_monowhite() {
 #[cfg(feature = "xyz")]
 #[test]
 fn depth_xyz12() {
-  let px = [4095u16 << 4; 6 * 3 * 2];
+  let px = le(&[4095u16 << 4; 6 * 3 * 2]);
   let frame = crate::frame::Xyz12Frame::<false>::new(&px, 6, 2, 18);
   assert_white_at_depth("xyz12", &frame, false);
 }
@@ -736,8 +775,8 @@ fn simd_is_scalar_yuv444p12() {
 fn simd_is_scalar_p010() {
   for w in WIDTHS.filter(|w| w % 2 == 0) {
     let mut s = Samples::new(w as u64);
-    let y: Vec<u16> = s.u16s(w * 2, 1023).into_iter().map(|c| c << 6).collect();
-    let uv: Vec<u16> = s.u16s(w, 1023).into_iter().map(|c| c << 6).collect();
+    let y: std::vec::Vec<u16> = s.u16s(w * 2, 1023).into_iter().map(|c| c << 6).collect();
+    let uv: std::vec::Vec<u16> = s.u16s(w, 1023).into_iter().map(|c| c << 6).collect();
     let frame = crate::frame::P010Frame::new(&y, &uv, w as u32, 2, w as u32, w as u32);
     assert_simd_is_scalar("p010", &frame);
   }
@@ -748,8 +787,8 @@ fn simd_is_scalar_p010() {
 fn simd_is_scalar_p410() {
   for w in WIDTHS {
     let mut s = Samples::new(w as u64);
-    let y: Vec<u16> = s.u16s(w * 2, 1023).into_iter().map(|c| c << 6).collect();
-    let uv: Vec<u16> = s
+    let y: std::vec::Vec<u16> = s.u16s(w * 2, 1023).into_iter().map(|c| c << 6).collect();
+    let uv: std::vec::Vec<u16> = s
       .u16s(w * 2 * 2, 1023)
       .into_iter()
       .map(|c| c << 6)
@@ -775,7 +814,7 @@ fn simd_is_scalar_nv20() {
 fn simd_is_scalar_y210() {
   for w in WIDTHS.filter(|w| w % 2 == 0) {
     let mut s = Samples::new(w as u64);
-    let packed: Vec<u16> = s
+    let packed: std::vec::Vec<u16> = s
       .u16s(w * 2 * 2, 1023)
       .into_iter()
       .map(|c| c << 6)
@@ -802,7 +841,7 @@ fn simd_is_scalar_v210() {
 fn simd_is_scalar_xv36() {
   for w in WIDTHS {
     let mut s = Samples::new(w as u64);
-    let packed: Vec<u16> = s
+    let packed: std::vec::Vec<u16> = s
       .u16s(w * 4 * 2, 4095)
       .into_iter()
       .map(|c| c << 4)
@@ -817,7 +856,7 @@ fn simd_is_scalar_xv36() {
 fn simd_is_scalar_yuva444p10() {
   for w in WIDTHS {
     let mut s = Samples::new(w as u64);
-    let planes: Vec<Vec<u16>> = (0..4).map(|_| s.u16s(w * 2, 1023)).collect();
+    let planes: std::vec::Vec<std::vec::Vec<u16>> = (0..4).map(|_| s.u16s(w * 2, 1023)).collect();
     let n = w as u32;
     let frame = crate::frame::Yuva444p10Frame::try_new(
       &planes[0], &planes[1], &planes[2], &planes[3], n, 2, n, n, n, n,
@@ -876,7 +915,7 @@ fn simd_is_scalar_gray12() {
 fn simd_is_scalar_gbrp10() {
   for w in WIDTHS {
     let mut s = Samples::new(w as u64);
-    let planes: Vec<Vec<u16>> = (0..3).map(|_| s.u16s(w * 2, 1023)).collect();
+    let planes: std::vec::Vec<std::vec::Vec<u16>> = (0..3).map(|_| s.u16s(w * 2, 1023)).collect();
     let n = w as u32;
     let frame = crate::frame::Gbrp10Frame::<false>::try_new(
       &planes[0], &planes[1], &planes[2], n, 2, n, n, n,
@@ -891,7 +930,7 @@ fn simd_is_scalar_gbrp10() {
 fn simd_is_scalar_xyz12() {
   for w in WIDTHS {
     let mut s = Samples::new(w as u64);
-    let px: Vec<u16> = s
+    let px: std::vec::Vec<u16> = s
       .u16s(w * 3 * 2, 4095)
       .into_iter()
       .map(|c| c << 4)
@@ -934,7 +973,7 @@ fn reference(y: u16, cb: u16, cr: u16, bits: u32, full: bool) -> [u16; 3] {
 
 /// The chips: black, white, mid grey and the 75% primaries, as `R'G'B'`
 /// fractions, encoded to `Y'CbCr` at `bits` and `range`.
-fn chips(bits: u32, full: bool) -> Vec<[u16; 3]> {
+fn chips(bits: u32, full: bool) -> std::vec::Vec<[u16; 3]> {
   let max = f64::from((1u32 << bits) - 1);
   let scale = f64::from(1u32 << (bits - 8));
   [
@@ -973,17 +1012,17 @@ fn chips(bits: u32, full: bool) -> Vec<[u16; 3]> {
 #[cfg(feature = "yuv-planar")]
 fn assert_golden(bits: u32, full: bool, golden: &[[u16; 3]; 6]) {
   let chips = chips(bits, full);
-  let (y, u, v): (Vec<u16>, Vec<u16>, Vec<u16>) = (
-    chips.iter().map(|c| c[0]).collect(),
-    chips.iter().map(|c| c[1]).collect(),
-    chips.iter().map(|c| c[2]).collect(),
+  let (y, u, v): (std::vec::Vec<u16>, std::vec::Vec<u16>, std::vec::Vec<u16>) = (
+    chips.iter().map(|c| c[0].to_le()).collect(),
+    chips.iter().map(|c| c[1].to_le()).collect(),
+    chips.iter().map(|c| c[2].to_le()).collect(),
   );
   let range = if full {
     DynamicRange::Full
   } else {
     DynamicRange::Limited
   };
-  let mut rgb = vec![0u16; 6 * 3];
+  let mut rgb = std::vec![0u16; 6 * 3];
   match bits {
     10 => Convert::from(&crate::frame::Yuv444p10Frame::new(
       &y, &u, &v, 6, 1, 6, 6, 6,
@@ -1087,9 +1126,9 @@ const GOLDEN_12_FULL: [[u16; 3]; 6] = [
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
-  let y: Vec<u16> = (327u16..=590).collect();
+  let y: std::vec::Vec<u16> = (327u16..=590).map(u16::to_le).collect();
   let w = y.len();
-  let neutral = vec![512u16; w];
+  let neutral = std::vec![512u16.to_le(); w];
   let frame = crate::frame::Yuv444p10Frame::new(
     &y, &neutral, &neutral, w as u32, 1, w as u32, w as u32, w as u32,
   );
@@ -1105,7 +1144,7 @@ fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
   );
   let mapping = SdrMapping::from_spec(&spec).unwrap();
 
-  let mut eight = vec![0u8; w * 3];
+  let mut eight = std::vec![0u8; w * 3];
   Convert::from(&frame)
     .spec(spec.clone())
     .rgb(&mut eight)
@@ -1113,13 +1152,13 @@ fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
     .unwrap();
   mapping.map_rgb8(&mut eight);
 
-  let mut native = vec![0u16; w * 3];
+  let mut native = std::vec![0u16; w * 3];
   Convert::from(&frame)
     .spec(spec)
     .rgb_u16(&mut native)
     .run()
     .unwrap();
-  let mut mapped = vec![0u8; w * 3];
+  let mut mapped = std::vec![0u8; w * 3];
   mapping
     .map_rgb16(
       &native,
@@ -1129,7 +1168,7 @@ fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
     .unwrap();
 
   let distinct = |sdr: &[u8]| {
-    let mut codes: Vec<u8> = sdr
+    let mut codes: std::vec::Vec<u8> = sdr
       .as_chunks::<3>()
       .0
       .iter()
@@ -1144,7 +1183,12 @@ fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
     through_native > 2 * through_eight,
     "native {through_native} against eight-bit {through_eight}"
   );
-  assert_eq!((through_eight, through_native), BANDING_COUNTS);
+  // The counts are real hardware's. Miri adds a few ULP of noise to every
+  // float intrinsic call, which can move a code across a rounding edge, so
+  // under it the bound above stands alone.
+  if !cfg!(miri) {
+    assert_eq!((through_eight, through_native), BANDING_COUNTS);
+  }
 }
 
 /// The distinct SDR codes the 264-code ramp keeps: 77 through the 8-bit face,

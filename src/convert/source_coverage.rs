@@ -272,6 +272,195 @@ fn every_sinker_format_implements_source() {
   }
 }
 
+/// Compile-time assertion that `F: RgbU16Source`, and run-time that its face's
+/// depth is `depth`: the depth the walker table states beside the row, read
+/// against this independent list.
+#[allow(dead_code)] // zero-active-block configs have no caller
+fn assert_rgb_u16_source<F: crate::convert::RgbU16Source>(depth: u32) {
+  assert_eq!(F::RGB_U16_DEPTH, depth, "{}", core::any::type_name::<F>());
+}
+
+/// Names every frame type with its face's depth and asserts each — the body of
+/// the per-feature blocks below.
+#[allow(unused_macros)]
+macro_rules! assert_rgb_u16_sources {
+  ($($ty:ty => $depth:expr),+ $(,)?) => { $(assert_rgb_u16_source::<$ty>($depth);)+ };
+}
+
+/// Exhaustiveness proof for the `u16` RGB face: every source whose sink tier
+/// has `with_rgb_u16` implements [`RgbU16Source`](crate::convert::RgbU16Source)
+/// at the depth that face writes. An integer source's depth is its own; a
+/// source the face widens or narrows to the full `u16` range carries 16, and
+/// the 1-bit and 8-bit gray sources 8. The 8-bit YUV, RGB, YUVA and GBR sources
+/// have no `u16` face and are absent, as on their sinks.
+#[test]
+fn every_u16_face_source_implements_rgb_u16_source_at_its_depth() {
+  #[cfg(feature = "xyz")]
+  {
+    assert_rgb_u16_sources!(crate::frame::Xyz12Frame<'static, false> => 16);
+  }
+
+  #[cfg(feature = "mono")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Pal8Frame<'static> => 16,
+      crate::frame::MonoblackFrame<'static> => 8,
+      crate::frame::MonowhiteFrame<'static> => 8,
+    );
+  }
+
+  #[cfg(feature = "yuv-planar")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Yuv420pFrame16<'static, 9, false> => 9,
+      crate::frame::Yuv420pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuv420pFrame16<'static, 12, false> => 12,
+      crate::frame::Yuv420pFrame16<'static, 14, false> => 14,
+      crate::frame::Yuv420pFrame16<'static, 16, false> => 16,
+      crate::frame::Yuv422pFrame16<'static, 9, false> => 9,
+      crate::frame::Yuv422pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuv422pFrame16<'static, 12, false> => 12,
+      crate::frame::Yuv422pFrame16<'static, 14, false> => 14,
+      crate::frame::Yuv422pFrame16<'static, 16, false> => 16,
+      crate::frame::Yuv444pFrame16<'static, 9, false> => 9,
+      crate::frame::Yuv444pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuv444pFrame16<'static, 12, false> => 12,
+      crate::frame::Yuv444pFrame16<'static, 14, false> => 14,
+      crate::frame::Yuv444pFrame16<'static, 16, false> => 16,
+      crate::frame::Yuv444pMsbFrame<'static, 10, false> => 10,
+      crate::frame::Yuv444pMsbFrame<'static, 12, false> => 12,
+      crate::frame::Yuv440pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuv440pFrame16<'static, 12, false> => 12,
+    );
+  }
+
+  #[cfg(feature = "yuv-semi-planar")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Nv20Frame<'static, false> => 10,
+      crate::frame::PnFrame<'static, 10, false> => 10,
+      crate::frame::PnFrame<'static, 12, false> => 12,
+      crate::frame::PnFrame<'static, 16, false> => 16,
+      crate::frame::PnFrame422<'static, 10, false> => 10,
+      crate::frame::PnFrame422<'static, 12, false> => 12,
+      crate::frame::PnFrame422<'static, 16, false> => 16,
+      crate::frame::PnFrame444<'static, 10, false> => 10,
+      crate::frame::PnFrame444<'static, 12, false> => 12,
+      crate::frame::PnFrame444<'static, 16, false> => 16,
+    );
+  }
+
+  #[cfg(feature = "y2xx")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Y2xxFrame<'static, 10, false> => 10,
+      crate::frame::Y2xxFrame<'static, 12, false> => 12,
+      crate::frame::Y2xxFrame<'static, 16, false> => 16,
+    );
+  }
+
+  #[cfg(feature = "yuv-444-packed")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::V30XFrame<'static> => 10,
+      crate::frame::V410Frame<'static, false> => 10,
+      crate::frame::Xv36Frame<'static, false> => 12,
+      crate::frame::Xv48Frame<'static, false> => 16,
+      crate::frame::Ayuv64Frame<'static, false> => 16,
+    );
+  }
+
+  #[cfg(feature = "v210")]
+  {
+    assert_rgb_u16_sources!(crate::frame::V210Frame<'static, false> => 10);
+  }
+
+  #[cfg(feature = "yuva")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Yuva420pFrame16<'static, 9, false> => 9,
+      crate::frame::Yuva420pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuva420pFrame16<'static, 12, false> => 12,
+      crate::frame::Yuva420pFrame16<'static, 16, false> => 16,
+      crate::frame::Yuva422pFrame16<'static, 9, false> => 9,
+      crate::frame::Yuva422pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuva422pFrame16<'static, 12, false> => 12,
+      crate::frame::Yuva422pFrame16<'static, 16, false> => 16,
+      crate::frame::Yuva444pFrame16<'static, 9, false> => 9,
+      crate::frame::Yuva444pFrame16<'static, 10, false> => 10,
+      crate::frame::Yuva444pFrame16<'static, 12, false> => 12,
+      crate::frame::Yuva444pFrame16<'static, 14, false> => 14,
+      crate::frame::Yuva444pFrame16<'static, 16, false> => 16,
+    );
+  }
+
+  #[cfg(feature = "rgb")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Rgb48Frame<'static, false> => 16,
+      crate::frame::Bgr48Frame<'static, false> => 16,
+      crate::frame::Rgba64Frame<'static, false> => 16,
+      crate::frame::Bgra64Frame<'static, false> => 16,
+      crate::frame::Rgb96Frame<'static, false> => 16,
+      crate::frame::Rgba128Frame<'static, false> => 16,
+      crate::frame::X2Rgb10Frame<'static, false> => 10,
+      crate::frame::X2Bgr10Frame<'static, false> => 10,
+    );
+  }
+
+  // The packed-float-RGB rows ride the `@convert @const(cfg: …)` arm, so their
+  // `RgbU16Source` impls carry its extra gate, as their `Source` impls do.
+  #[cfg(all(feature = "rgb-float", any(feature = "rgb", feature = "yuv-planar")))]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Rgbf16Frame<'static, false> => 16,
+      crate::frame::Rgbf32Frame<'static, false> => 16,
+      crate::frame::Rgbaf16Frame<'static, false> => 16,
+      crate::frame::Rgbaf32Frame<'static, false> => 16,
+    );
+  }
+
+  #[cfg(feature = "gray")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::Ya8Frame<'static> => 8,
+      crate::frame::GrayNFrame<'static, 9, false> => 9,
+      crate::frame::GrayNFrame<'static, 10, false> => 10,
+      crate::frame::GrayNFrame<'static, 12, false> => 12,
+      crate::frame::GrayNFrame<'static, 14, false> => 14,
+      crate::frame::Gray16Frame<'static, false> => 16,
+      crate::frame::Gray32Frame<'static, false> => 16,
+      crate::frame::Ya16Frame<'static, false> => 16,
+      crate::frame::Grayf16Frame<'static, false> => 16,
+      crate::frame::Grayf32Frame<'static, false> => 16,
+      crate::frame::Yaf16Frame<'static, false> => 16,
+      crate::frame::Yaf32Frame<'static, false> => 16,
+    );
+  }
+
+  #[cfg(feature = "gbr")]
+  {
+    assert_rgb_u16_sources!(
+      crate::frame::GbrpHighBitFrame<'static, 9, false> => 9,
+      crate::frame::GbrpHighBitFrame<'static, 10, false> => 10,
+      crate::frame::GbrpHighBitFrame<'static, 12, false> => 12,
+      crate::frame::GbrpHighBitFrame<'static, 14, false> => 14,
+      crate::frame::GbrpHighBitFrame<'static, 16, false> => 16,
+      crate::frame::GbrapHighBitFrame<'static, 10, false> => 10,
+      crate::frame::GbrapHighBitFrame<'static, 12, false> => 12,
+      crate::frame::GbrapHighBitFrame<'static, 14, false> => 14,
+      crate::frame::GbrapHighBitFrame<'static, 16, false> => 16,
+      crate::frame::GbrpMsbFrame<'static, 10, false> => 10,
+      crate::frame::GbrpMsbFrame<'static, 12, false> => 12,
+      crate::frame::Gbrap32Frame<'static, false> => 16,
+      crate::frame::Gbrpf16Frame<'static, false> => 16,
+      crate::frame::Gbrpf32Frame<'static, false> => 16,
+      crate::frame::Gbrapf16Frame<'static, false> => 16,
+      crate::frame::Gbrapf32Frame<'static, false> => 16,
+    );
+  }
+}
+
 /// A `Bt601` / limited / left-sited spec, matching [`super::tests`].
 #[allow(dead_code)] // unused under single-format powersets without a parity test
 fn spec_601() -> ColorSpec {

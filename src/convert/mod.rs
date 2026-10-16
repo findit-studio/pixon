@@ -25,6 +25,10 @@
 
 #[cfg(all(test, feature = "yuv-planar"))]
 mod tests;
+// The `u16` RGB face's laws: parity, depth, SIMD, goldens and banding across the
+// face families, so they ride the umbrella `frame` feature that enables them all.
+#[cfg(all(test, feature = "frame"))]
+mod rgb_u16_tests;
 // Whole-table `Source` coverage — the compile-time exhaustiveness proof plus
 // one byte-parity spot-check per family. Rides the `Source` gate
 // (`any(std, alloc)`) and additionally requires at least one convertible source
@@ -180,6 +184,58 @@ pub trait Source: sealed::Sealed {
   ) -> Result<(), MixedSinkerError>
   where
     R: Resampler;
+
+  /// What [`Convert::rgb_u16`]'s buffer is held as on this source: the buffer
+  /// itself where the source has a `u16` RGB face ([`RgbU16Source`]), and the
+  /// uninhabited [`Infallible`](core::convert::Infallible) where it has none.
+  /// A faceless source can therefore never hold one, and
+  /// [`attach_rgb_u16`](Self::attach_rgb_u16) has no case to refuse.
+  #[doc(hidden)]
+  type RgbU16Slot<'b>;
+
+  /// Attaches the `u16` RGB buffer [`Convert::rgb_u16`] was handed to `sink`
+  /// — the sink tier's `set_rgb_u16` where the face exists, and an empty
+  /// `match` where the slot cannot hold one. Called by [`Convert::run`] only
+  /// when [`Convert::rgb_u16`] was set.
+  #[doc(hidden)]
+  fn attach_rgb_u16<'sink, R>(
+    sink: &mut MixedSinker<'sink, Self::Marker, R>,
+    slot: Self::RgbU16Slot<'sink>,
+  ) -> Result<(), MixedSinkerError>
+  where
+    R: Resampler;
+}
+
+/// A [`Source`] whose decode has a packed `u16` RGB face: what
+/// [`Convert::rgb_u16`] writes, the same face as the sink tier's
+/// `MixedSinker::with_rgb_u16`.
+///
+/// Every sample of the face lies in `0..=(1 << RGB_U16_DEPTH) - 1`. The depth
+/// is stated once, by the source's own row of the `walker!` table:
+///
+/// - an integer source carries its NATIVE depth — a 10-bit format's samples
+///   in `0..=1023`, low-packed, as FFmpeg's `yuv420p10le` stores them (a
+///   `p010` consumer shifts them left by 6);
+/// - a source the face widens or narrows to the full `u16` range carries 16:
+///   `Pal8` (`(x << 8) | x`), the 32-bit integer formats (`>> 16`), the float
+///   formats (clamped to `[0, 1]`, `× 65535`) and XYZ12 (linear `× 65535`);
+/// - the 1-bit and 8-bit gray sources carry 8 (zero-extended).
+///
+/// The depth is the `bits` that
+/// [`SdrMapping::map_rgb16`](crate::hdr::SdrMapping::map_rgb16) takes, so an HDR
+/// picture can be decoded and mapped at the precision its source has.
+///
+/// A source with no `u16` face — every 8-bit YUV, RGB, YUVA and GBR source —
+/// does not implement this trait, so [`Convert::rgb_u16`] on it is a compile
+/// error, as `with_rgb_u16` is on its sink. Sealed through [`Source`].
+pub trait RgbU16Source: Source {
+  /// The bit depth of the face's samples: each lies in
+  /// `0..=(1 << RGB_U16_DEPTH) - 1`.
+  const RGB_U16_DEPTH: u32;
+
+  /// `buf` as this source's [`RgbU16Slot`](Source::RgbU16Slot).
+  #[doc(hidden)]
+  fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_>;
 }
 
 /// The golden one-call decode builder — Tier 0 of pixon's API.
@@ -221,6 +277,9 @@ pub struct Convert<'a, Fr: Source, R = NoopResampler> {
   rgb: Option<&'a mut [u8]>,
   rgba: Option<&'a mut [u8]>,
   luma: Option<&'a mut [u8]>,
+  /// The `u16` RGB buffer, held as the source's slot: `None` for every source
+  /// without the face, because its slot type has no value.
+  rgb_u16: Option<Fr::RgbU16Slot<'a>>,
   // HSV, the siting-aware chroma tweaks, the ST 428 toggle, and the native
   // fast-tier flag are all sink knobs gated to the source families whose sink
   // exposes them. PR-A implements [`Source`] only for the planar-YUV proof
@@ -255,6 +314,7 @@ impl<'a, Fr: Source> From<&'a Fr> for Convert<'a, Fr, NoopResampler> {
       rgb: None,
       rgba: None,
       luma: None,
+      rgb_u16: None,
       #[cfg(feature = "yuv-planar")]
       hsv: None,
       spec: None,
@@ -284,6 +344,7 @@ impl<'a, Fr: Source, R> Convert<'a, Fr, R> {
       rgb: self.rgb,
       rgba: self.rgba,
       luma: self.luma,
+      rgb_u16: self.rgb_u16,
       #[cfg(feature = "yuv-planar")]
       hsv: self.hsv,
       spec: self.spec,
@@ -404,6 +465,51 @@ impl<'a, Fr: Source, R> Convert<'a, Fr, R> {
   }
 }
 
+/// The `u16` RGB face, which exists only on a builder over an
+/// [`RgbU16Source`].
+///
+/// Like the XYZ12 gamut below, it is not a setter on the generic builder: a
+/// source with no such face has nothing to write into it, and a buffer it
+/// silently left stale is the failure mode this seam exists to remove.
+impl<'a, Fr: RgbU16Source, R> Convert<'a, Fr, R> {
+  /// Attaches a packed `u16` RGB output buffer (`out_width * out_height * 3`
+  /// elements), each sample at the source's
+  /// [`RGB_U16_DEPTH`](RgbU16Source::RGB_U16_DEPTH).
+  ///
+  /// The face is the sink tier's `with_rgb_u16`, assembled for you: the same
+  /// samples, byte for byte, at native size and through
+  /// [`resize`](Convert::resize) / [`resize_with`](Convert::resize_with).
+  /// It combines with every other output.
+  ///
+  /// ```
+  /// # #[cfg(all(any(feature = "std", feature = "alloc"), feature = "yuv-planar"))]
+  /// # fn native() -> Result<(), pixon::Error> {
+  /// use pixon::{ColorMatrix, ColorSpec, Convert, DynamicRange, PixelFormat, RgbU16Source};
+  /// use pixon::frame::Yuv420p10Frame;
+  ///
+  /// let (w, h) = (4u32, 2u32);
+  /// let y = [940u16; 8]; // limited-range 10-bit white
+  /// let (u, v) = ([512u16; 2], [512u16; 2]);
+  /// let frame = Yuv420p10Frame::new(&y, &u, &v, w, h, w, w / 2, w / 2);
+  /// let spec = ColorSpec::resolve(PixelFormat::Yuv420p10Le, DynamicRange::Limited, ColorMatrix::Bt2020Ncl);
+  ///
+  /// let mut rgb = [0u16; 4 * 2 * 3];
+  /// Convert::from(&frame).spec(spec).rgb_u16(&mut rgb).run()?;
+  /// assert_eq!(<Yuv420p10Frame<'_> as RgbU16Source>::RGB_U16_DEPTH, 10);
+  /// assert!(rgb.iter().all(|&sample| sample == 1023));
+  /// # Ok(())
+  /// # }
+  /// # #[cfg(all(any(feature = "std", feature = "alloc"), feature = "yuv-planar"))]
+  /// # native().unwrap();
+  /// ```
+  #[must_use]
+  #[inline]
+  pub fn rgb_u16(mut self, buf: &'a mut [u16]) -> Self {
+    self.rgb_u16 = Some(Fr::rgb_u16_slot(buf));
+    self
+  }
+}
+
 /// The XYZ12 output-gamut door, which exists only on an XYZ12 builder.
 ///
 /// A target gamut is meaningless for every other source, so it is not a
@@ -483,6 +589,9 @@ impl<Fr: Source, R: Resampler> Convert<'_, Fr, R> {
     }
     if let Some(buf) = self.rgba {
       Fr::attach_rgba(&mut sink, buf)?;
+    }
+    if let Some(slot) = self.rgb_u16 {
+      Fr::attach_rgb_u16(&mut sink, slot)?;
     }
 
     sink.set_simd(self.simd);

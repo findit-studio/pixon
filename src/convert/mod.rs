@@ -70,6 +70,39 @@ use crate::{
 #[cfg(feature = "yuv-planar")]
 use crate::{ChromaLocation, sinker::St428Interpretation};
 
+/// The argument a sink with no `u16` RGB face is probed with, by the
+/// `walker!` table's rows that state none: uninhabited, so the probe is never
+/// called.
+// A feature set whose rows all state a face has no probe to use it.
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub(crate) enum Faceless {}
+
+/// The `u16` RGB face's census, by construction: a `walker!` row that states
+/// no face calls `set_rgb_u16` and `with_rgb_u16` on its sink with a
+/// [`Faceless`]. Where the sink has no face, this trait's methods take the
+/// call. Where it has one, its own inherent methods take it — an inherent
+/// method wins over a trait's — and refuse the argument, so the row does not
+/// build until it states the face its sink has.
+// As for `Faceless`: a feature set may hold no row without a face.
+#[allow(dead_code)]
+pub(crate) trait FacelessSink {
+  /// Never called: [`Faceless`] has no value.
+  fn set_rgb_u16(&mut self, faceless: Faceless) {
+    match faceless {}
+  }
+
+  /// Never called: [`Faceless`] has no value.
+  fn with_rgb_u16(self, faceless: Faceless) -> Self
+  where
+    Self: Sized,
+  {
+    match faceless {}
+  }
+}
+
+impl<T: ?Sized> FacelessSink for T {}
+
 /// Seals [`Source`] and [`FromSpec`]: only the crate's own types implement
 /// them, so neither the frame ↔ [`Convert`] contract nor the set of
 /// spec-derivable walk options is user-extensible.
@@ -206,32 +239,101 @@ pub trait Source: sealed::Sealed {
     R: Resampler;
 }
 
+/// The bit depth of each channel of a source's packed `u16` RGB face
+/// ([`RgbU16Source::RGB_U16_DEPTHS`]), in the face's own `R, G, B` order: each
+/// sample of a channel lies in `0..=(1 << depth) - 1`.
+///
+/// Every source's face has one depth on all three channels but eight legacy
+/// packed RGB formats', whose channels keep their own widths: `Rgb565` and
+/// `Bgr565` (5, 6, 5), `Rgb8` and `Bgr8` (3, 3, 2), and `Rgb4`, `Bgr4`,
+/// `Rgb4Byte` and `Bgr4Byte` (1, 2, 1). [`uniform`](Self::uniform) is the one
+/// depth where there is one — the `bits`
+/// [`SdrMapping::map_rgb16`](crate::hdr::SdrMapping::map_rgb16) takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RgbDepths {
+  red: u32,
+  green: u32,
+  blue: u32,
+}
+
+impl RgbDepths {
+  /// The depths of a face, channel by channel.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  #[must_use]
+  pub const fn new(red: u32, green: u32, blue: u32) -> Self {
+    Self { red, green, blue }
+  }
+
+  /// The depths of a face of `depth` on every channel.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  #[must_use]
+  pub const fn splat(depth: u32) -> Self {
+    Self::new(depth, depth, depth)
+  }
+
+  /// The red channel's depth.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn red(self) -> u32 {
+    self.red
+  }
+
+  /// The green channel's depth.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn green(self) -> u32 {
+    self.green
+  }
+
+  /// The blue channel's depth.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn blue(self) -> u32 {
+    self.blue
+  }
+
+  /// The one depth of all three channels where they agree, and [`None`] for a
+  /// face whose channels differ.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  #[must_use]
+  pub const fn uniform(self) -> Option<u32> {
+    if self.red == self.green && self.green == self.blue {
+      Some(self.red)
+    } else {
+      None
+    }
+  }
+}
+
 /// A [`Source`] whose decode has a packed `u16` RGB face: what
 /// [`Convert::rgb_u16`] writes, the same face as the sink tier's
 /// `MixedSinker::with_rgb_u16`.
 ///
-/// Every sample of the face lies in `0..=(1 << RGB_U16_DEPTH) - 1`. The depth
-/// is stated once, by the source's own row of the `walker!` table:
+/// Every sample of a channel lies in `0..=(1 << depth) - 1`, `depth` that
+/// channel's in [`RGB_U16_DEPTHS`](Self::RGB_U16_DEPTHS). The depths are
+/// stated once, by the source's own row of the `walker!` table:
 ///
-/// - an integer source carries its NATIVE depth — a 10-bit format's samples
-///   in `0..=1023`, low-packed, as FFmpeg's `yuv420p10le` stores them (a
-///   `p010` consumer shifts them left by 6);
+/// - an integer source carries its NATIVE depth on every channel — a 10-bit
+///   format's samples in `0..=1023`, low-packed, as FFmpeg's `yuv420p10le`
+///   stores them (a `p010` consumer shifts them left by 6);
 /// - a source the face widens or narrows to the full `u16` range carries 16:
 ///   `Pal8` (`(x << 8) | x`), the 32-bit integer formats (`>> 16`), the float
 ///   formats (clamped to `[0, 1]`, `× 65535`) and XYZ12 (linear `× 65535`);
-/// - the 1-bit and 8-bit gray sources carry 8 (zero-extended).
+/// - the 1-bit and 8-bit gray sources carry 8 (zero-extended);
+/// - a legacy packed RGB source carries each channel's own width, unexpanded:
+///   5 for `Rgb555` and `Bgr555`, 4 for `Rgb444` and `Bgr444`, and, channel
+///   by channel, 5/6/5 for `Rgb565` and `Bgr565`, 3/3/2 for `Rgb8` and
+///   `Bgr8`, and 1/2/1 for `Rgb4`, `Bgr4`, `Rgb4Byte` and `Bgr4Byte`.
 ///
-/// The depth is the `bits` that
-/// [`SdrMapping::map_rgb16`](crate::hdr::SdrMapping::map_rgb16) takes, so an HDR
-/// picture can be decoded and mapped at the precision its source has.
+/// Where the three agree ([`RgbDepths::uniform`]), the depth is the `bits`
+/// that [`SdrMapping::map_rgb16`](crate::hdr::SdrMapping::map_rgb16) takes, so
+/// an HDR picture can be decoded and mapped at the precision its source has.
 ///
+/// Every source whose sink tier has `with_rgb_u16` implements this trait: a
+/// `walker!` row that states no face over a sink that has one does not build.
 /// A source with no `u16` face — every 8-bit YUV, RGB, YUVA and GBR source —
-/// does not implement this trait, so [`Convert::rgb_u16`] on it is a compile
-/// error, as `with_rgb_u16` is on its sink. Sealed through [`Source`].
+/// does not implement it, so [`Convert::rgb_u16`] on it is a compile error, as
+/// `with_rgb_u16` is on its sink. Sealed through [`Source`].
 pub trait RgbU16Source: Source {
-  /// The bit depth of the face's samples: each lies in
-  /// `0..=(1 << RGB_U16_DEPTH) - 1`.
-  const RGB_U16_DEPTH: u32;
+  /// The bit depth of each channel of the face.
+  const RGB_U16_DEPTHS: RgbDepths;
 
   /// `buf` as this source's [`RgbU16Slot`](Source::RgbU16Slot).
   #[doc(hidden)]
@@ -473,8 +575,8 @@ impl<'a, Fr: Source, R> Convert<'a, Fr, R> {
 /// silently left stale is the failure mode this seam exists to remove.
 impl<'a, Fr: RgbU16Source, R> Convert<'a, Fr, R> {
   /// Attaches a packed `u16` RGB output buffer (`out_width * out_height * 3`
-  /// elements), each sample at the source's
-  /// [`RGB_U16_DEPTH`](RgbU16Source::RGB_U16_DEPTH).
+  /// elements), each channel's samples at the source's depth for it
+  /// ([`RGB_U16_DEPTHS`](RgbU16Source::RGB_U16_DEPTHS)).
   ///
   /// The face is the sink tier's `with_rgb_u16`, assembled for you: the same
   /// samples, byte for byte, at native size and through
@@ -484,7 +586,7 @@ impl<'a, Fr: RgbU16Source, R> Convert<'a, Fr, R> {
   /// ```
   /// # #[cfg(all(any(feature = "std", feature = "alloc"), feature = "yuv-planar"))]
   /// # fn native() -> Result<(), pixon::Error> {
-  /// use pixon::{ColorMatrix, ColorSpec, Convert, DynamicRange, PixelFormat, RgbU16Source};
+  /// use pixon::{ColorMatrix, ColorSpec, Convert, DynamicRange, PixelFormat, RgbDepths, RgbU16Source};
   /// use pixon::frame::Yuv420p10Frame;
   ///
   /// let (w, h) = (4u32, 2u32);
@@ -495,7 +597,7 @@ impl<'a, Fr: RgbU16Source, R> Convert<'a, Fr, R> {
   ///
   /// let mut rgb = [0u16; 4 * 2 * 3];
   /// Convert::from(&frame).spec(spec).rgb_u16(&mut rgb).run()?;
-  /// assert_eq!(<Yuv420p10Frame<'_> as RgbU16Source>::RGB_U16_DEPTH, 10);
+  /// assert_eq!(<Yuv420p10Frame<'_> as RgbU16Source>::RGB_U16_DEPTHS, RgbDepths::splat(10));
   /// assert!(rgb.iter().all(|&sample| sample == 1023));
   /// # Ok(())
   /// # }

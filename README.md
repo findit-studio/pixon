@@ -81,10 +81,11 @@ The outputs `Convert` writes, any subset at once:
 | `rgba` | packed 8-bit RGBA, `w * h * 4` bytes | every source (opaque α where it has none) |
 | `luma` | one 8-bit plane, `w * h` bytes | every source |
 | `hsv` | three 8-bit planes | every source (the setter rides the `yuv-planar` feature) |
-| `rgb_u16` | packed `u16` RGB, `w * h * 3` samples at `RgbU16Source::RGB_U16_DEPTH` | every source with a `u16` face: the high-bit YUV, YUVA, gray, GBR, packed RGB and float formats, `Pal8`, mono and XYZ12 |
+| `rgb_u16` | packed `u16` RGB, `w * h * 3` samples at `RgbU16Source::RGB_U16_DEPTHS` | every source with a `u16` face: the high-bit YUV, YUVA, gray, GBR, packed RGB and float formats, the legacy packed RGB formats, `Pal8`, mono and XYZ12 |
 
 `rgb_u16` is the native-depth face: a 10-bit picture's samples come back in
-`0..=1023`. It is what an HDR picture is decoded through before
+`0..=1023`, and a legacy packed RGB picture's each at its channel's own width
+(`RgbDepths`, 5/6/5 for `Rgb565`). It is what an HDR picture is decoded through before
 `hdr::SdrMapping::map_rgb16` maps it at the precision it has. On a source with
 no `u16` face it does not compile.
 

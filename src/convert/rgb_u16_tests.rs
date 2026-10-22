@@ -5,10 +5,13 @@
 //!   resize and through a filtered one, for one source of every walker arm and
 //!   face family. The walk on the hand-assembled side is the source's own
 //!   ([`Source::walk_mixed`]), so what the two sides can differ in is exactly
-//!   the face's assembly. Whole-table coverage of the trait and its depths is
-//!   `source_coverage`'s.
-//! - **Depth.** No sample of a family's face exceeds `2^RGB_U16_DEPTH − 1`, and
-//!   a white picture reaches it wherever the face is native or full scale.
+//!   the face's assembly. The face's census is the `walker!` table itself: a
+//!   row that states no face over a sink that has one does not build. The
+//!   twelve legacy packed RGB faces are each held to parity here.
+//! - **Depth.** No sample of a channel exceeds `2^depth − 1`, `depth` that
+//!   channel's in `RGB_U16_DEPTHS`, and a white picture reaches it wherever the
+//!   face is native or full scale — each of the twelve legacy faces channel by
+//!   channel, the mixed ones among them.
 //! - **SIMD.** Each kernel family's face is bit-exact against the scalar
 //!   reference at every width across the SIMD block sizes and their tails.
 //! - **Goldens.** 10- and 12-bit BT.2020 chips, limited and full range, pinned
@@ -25,7 +28,7 @@
 use crate::{
   ChromaLocation, ColorInfo, ColorMatrix, ColorSpec, DynamicRange, PixelFormat, Primaries,
   Transfer,
-  convert::{Convert, FromSpec, RgbU16Source, Source},
+  convert::{Convert, FromSpec, RgbDepths, RgbU16Source, Source},
   hdr::SdrMapping,
   resample::{AreaResampler, FilteredResampler, Lanczos3, Resampler},
   sinker::{MixedSinker, MixedSinkerError},
@@ -196,25 +199,32 @@ macro_rules! assert_rgb_u16_parity {
   }};
 }
 
-/// Asserts no sample of `frame`'s face exceeds `2^RGB_U16_DEPTH − 1`, and,
-/// where `reaches` is set, that every sample of this white picture equals it.
+/// Asserts no sample of a channel of `frame`'s face exceeds `2^depth − 1`,
+/// `depth` that channel's in `RGB_U16_DEPTHS`, and, where `reaches` is set, that
+/// every sample of this white picture equals it.
 fn assert_white_at_depth<Fr: RgbU16Source>(label: &str, frame: &Fr, reaches: bool) {
   let (w, h) = frame.dimensions();
-  let max = (1u32 << Fr::RGB_U16_DEPTH) - 1;
+  let depths = Fr::RGB_U16_DEPTHS;
+  let max = [depths.red(), depths.green(), depths.blue()].map(|depth| (1u32 << depth) - 1);
   let mut rgb = std::vec![0u16; w * h * 3];
   Convert::from(frame)
     .spec(spec_2020(DynamicRange::Full))
     .rgb_u16(&mut rgb)
     .run()
     .unwrap();
+  let pixels = rgb.as_chunks::<3>().0;
   assert!(
-    rgb.iter().all(|&s| u32::from(s) <= max),
-    "{label}: a sample above {max}: {rgb:?}"
+    pixels
+      .iter()
+      .all(|pixel| (0..3).all(|c| u32::from(pixel[c]) <= max[c])),
+    "{label}: a sample above {max:?}: {rgb:?}"
   );
   if reaches {
     assert!(
-      rgb.iter().all(|&s| u32::from(s) == max),
-      "{label}: white is not {max}: {rgb:?}"
+      pixels
+        .iter()
+        .all(|pixel| (0..3).all(|c| u32::from(pixel[c]) == max[c])),
+      "{label}: white is not {max:?}: {rgb:?}"
     );
   }
 }
@@ -728,6 +738,244 @@ fn depth_xyz12() {
   assert_white_at_depth("xyz12", &frame, false);
 }
 
+// ---- the twelve legacy packed RGB faces ----------------------------------------
+
+#[test]
+fn rgb_depths_name_each_channel_and_one_depth_only_where_all_three_agree() {
+  let mixed = RgbDepths::new(5, 6, 5);
+  assert_eq!((mixed.red(), mixed.green(), mixed.blue()), (5, 6, 5));
+  assert_eq!(mixed.uniform(), None);
+  assert_eq!(RgbDepths::new(1, 2, 1).uniform(), None);
+  assert_eq!(RgbDepths::new(3, 3, 2).uniform(), None);
+  assert_eq!(RgbDepths::new(4, 4, 5).uniform(), None);
+  assert_eq!(RgbDepths::splat(10), RgbDepths::new(10, 10, 10));
+  assert_eq!(RgbDepths::splat(10).uniform(), Some(10));
+  assert_eq!(RgbDepths::new(4, 4, 4).uniform(), Some(4));
+}
+
+/// Each legacy face's depths, channel by channel in the face's `R, G, B`
+/// order — what its kernels write, read against the `walker!` table — and
+/// [`RgbDepths::uniform`] `None` for exactly the eight whose channels differ.
+#[cfg(feature = "rgb-legacy")]
+#[test]
+fn the_legacy_faces_state_each_channels_depth_and_eight_have_no_one_depth() {
+  use crate::frame::{
+    Bgr4ByteFrame, Bgr4Frame, Bgr8Frame, Bgr444Frame, Bgr555Frame, Bgr565Frame, Rgb4ByteFrame,
+    Rgb4Frame, Rgb8Frame, Rgb444Frame, Rgb555Frame, Rgb565Frame,
+  };
+  fn depths<F: RgbU16Source>() -> RgbDepths {
+    F::RGB_U16_DEPTHS
+  }
+  let faces = [
+    (
+      "rgb565",
+      depths::<Rgb565Frame<'_>>(),
+      RgbDepths::new(5, 6, 5),
+    ),
+    (
+      "bgr565",
+      depths::<Bgr565Frame<'_>>(),
+      RgbDepths::new(5, 6, 5),
+    ),
+    ("rgb555", depths::<Rgb555Frame<'_>>(), RgbDepths::splat(5)),
+    ("bgr555", depths::<Bgr555Frame<'_>>(), RgbDepths::splat(5)),
+    ("rgb444", depths::<Rgb444Frame<'_>>(), RgbDepths::splat(4)),
+    ("bgr444", depths::<Bgr444Frame<'_>>(), RgbDepths::splat(4)),
+    ("rgb8", depths::<Rgb8Frame<'_>>(), RgbDepths::new(3, 3, 2)),
+    ("bgr8", depths::<Bgr8Frame<'_>>(), RgbDepths::new(3, 3, 2)),
+    (
+      "rgb4_byte",
+      depths::<Rgb4ByteFrame<'_>>(),
+      RgbDepths::new(1, 2, 1),
+    ),
+    (
+      "bgr4_byte",
+      depths::<Bgr4ByteFrame<'_>>(),
+      RgbDepths::new(1, 2, 1),
+    ),
+    ("rgb4", depths::<Rgb4Frame<'_>>(), RgbDepths::new(1, 2, 1)),
+    ("bgr4", depths::<Bgr4Frame<'_>>(), RgbDepths::new(1, 2, 1)),
+  ];
+  for (label, stated, written) in faces {
+    assert_eq!(stated, written, "{label}");
+  }
+  let mixed: std::vec::Vec<&str> = faces
+    .iter()
+    .filter(|(_, stated, _)| stated.uniform().is_none())
+    .map(|(label, _, _)| *label)
+    .collect();
+  assert_eq!(
+    mixed,
+    [
+      "rgb565",
+      "bgr565",
+      "rgb8",
+      "bgr8",
+      "rgb4_byte",
+      "bgr4_byte",
+      "rgb4",
+      "bgr4"
+    ]
+  );
+}
+
+/// White, every bit of every pixel set — the pad bits too — reaches each
+/// channel's own depth, and no sample passes it.
+#[cfg(feature = "rgb-legacy")]
+#[test]
+fn depth_legacy_rgb_channel_by_channel() {
+  let words = [0xFFu8; 6 * 2 * 2];
+  let bytes = [0xFFu8; 6 * 2];
+  let nibbles = [0xFFu8; 3 * 2];
+  assert_white_at_depth(
+    "rgb565",
+    &crate::frame::Rgb565Frame::try_new(&words, 6, 2, 12).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "bgr565",
+    &crate::frame::Bgr565Frame::try_new(&words, 6, 2, 12).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "rgb555",
+    &crate::frame::Rgb555Frame::try_new(&words, 6, 2, 12).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "bgr555",
+    &crate::frame::Bgr555Frame::try_new(&words, 6, 2, 12).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "rgb444",
+    &crate::frame::Rgb444Frame::try_new(&words, 6, 2, 12).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "bgr444",
+    &crate::frame::Bgr444Frame::try_new(&words, 6, 2, 12).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "rgb8",
+    &crate::frame::Rgb8Frame::try_new(&bytes, 6, 2, 6).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "bgr8",
+    &crate::frame::Bgr8Frame::try_new(&bytes, 6, 2, 6).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "rgb4_byte",
+    &crate::frame::Rgb4ByteFrame::try_new(&bytes, 6, 2, 6).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "bgr4_byte",
+    &crate::frame::Bgr4ByteFrame::try_new(&bytes, 6, 2, 6).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "rgb4",
+    &crate::frame::Rgb4Frame::try_new(&nibbles, 6, 2, 3).unwrap(),
+    true,
+  );
+  assert_white_at_depth(
+    "bgr4",
+    &crate::frame::Bgr4Frame::try_new(&nibbles, 6, 2, 3).unwrap(),
+    true,
+  );
+}
+
+#[cfg(feature = "rgb-legacy")]
+#[test]
+fn parity_legacy_rgb_packed_words() {
+  let mut s = Samples::new(21);
+  let words = s.u8s(6 * 4 * 2);
+  assert_rgb_u16_parity!(
+    "rgb565",
+    crate::frame::Rgb565Frame<'_>,
+    crate::frame::Rgb565Frame::try_new(&words, 6, 4, 12).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "bgr565",
+    crate::frame::Bgr565Frame<'_>,
+    crate::frame::Bgr565Frame::try_new(&words, 6, 4, 12).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "rgb555",
+    crate::frame::Rgb555Frame<'_>,
+    crate::frame::Rgb555Frame::try_new(&words, 6, 4, 12).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "bgr555",
+    crate::frame::Bgr555Frame<'_>,
+    crate::frame::Bgr555Frame::try_new(&words, 6, 4, 12).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "rgb444",
+    crate::frame::Rgb444Frame<'_>,
+    crate::frame::Rgb444Frame::try_new(&words, 6, 4, 12).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "bgr444",
+    crate::frame::Bgr444Frame<'_>,
+    crate::frame::Bgr444Frame::try_new(&words, 6, 4, 12).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+}
+
+#[cfg(feature = "rgb-legacy")]
+#[test]
+fn parity_legacy_rgb_bit_packed() {
+  let mut s = Samples::new(22);
+  let bytes = s.u8s(6 * 4);
+  let nibbles = s.u8s(3 * 4);
+  assert_rgb_u16_parity!(
+    "rgb8",
+    crate::frame::Rgb8Frame<'_>,
+    crate::frame::Rgb8Frame::try_new(&bytes, 6, 4, 6).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "bgr8",
+    crate::frame::Bgr8Frame<'_>,
+    crate::frame::Bgr8Frame::try_new(&bytes, 6, 4, 6).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "rgb4_byte",
+    crate::frame::Rgb4ByteFrame<'_>,
+    crate::frame::Rgb4ByteFrame::try_new(&bytes, 6, 4, 6).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "bgr4_byte",
+    crate::frame::Bgr4ByteFrame<'_>,
+    crate::frame::Bgr4ByteFrame::try_new(&bytes, 6, 4, 6).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "rgb4",
+    crate::frame::Rgb4Frame<'_>,
+    crate::frame::Rgb4Frame::try_new(&nibbles, 6, 4, 3).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+  assert_rgb_u16_parity!(
+    "bgr4",
+    crate::frame::Bgr4Frame<'_>,
+    crate::frame::Bgr4Frame::try_new(&nibbles, 6, 4, 3).unwrap(),
+    (6, 4) -> (3, 2)
+  );
+}
+
 // ---- SIMD against the scalar reference, every width, every kernel family -------
 
 #[cfg(feature = "yuv-planar")]
@@ -1162,7 +1410,9 @@ fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
   mapping
     .map_rgb16(
       &native,
-      <crate::frame::Yuv444p10Frame<'_> as RgbU16Source>::RGB_U16_DEPTH,
+      <crate::frame::Yuv444p10Frame<'_> as RgbU16Source>::RGB_U16_DEPTHS
+        .uniform()
+        .expect("one depth"),
       &mut mapped,
     )
     .unwrap();

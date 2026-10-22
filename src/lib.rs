@@ -196,18 +196,18 @@
 //! | [`Rgba128`]                     | 32        | 4:4:4       | packed u32 quadruple, source α                           | `rgba128le`                     | 16 (full scale)   |
 //! | [`X2Rgb10`]                     | 10        | 4:4:4       | packed u32, 2-bit pad (R,G,B)                            | `x2rgb10le`                     | 10                |
 //! | [`X2Bgr10`]                     | 10        | 4:4:4       | packed u32, 2-bit pad (B,G,R)                            | `x2bgr10le`                     | 10                |
-//! | [`Rgb444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (R,G,B)                            | `rgb444le`                      | —                 |
-//! | [`Bgr444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (B,G,R)                            | `bgr444le`                      | —                 |
-//! | [`Rgb555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (R,G,B)                            | `rgb555le`                      | —                 |
-//! | [`Bgr555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (B,G,R)                            | `bgr555le`                      | —                 |
-//! | [`Rgb565`]                      | 5/6/5     | 4:4:4       | packed u16 (R,G,B)                                       | `rgb565le`                      | —                 |
-//! | [`Bgr565`]                      | 5/6/5     | 4:4:4       | packed u16 (B,G,R)                                       | `bgr565le`                      | —                 |
-//! | [`Rgb8`]                        | 3/3/2     | 4:4:4       | packed byte (R,G,B)                                      | `rgb8`                          | —                 |
-//! | [`Bgr8`]                        | 2/3/3     | 4:4:4       | packed byte (B,G,R)                                      | `bgr8`                          | —                 |
-//! | [`Rgb4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (R,G,B)                          | `rgb4_byte`                     | —                 |
-//! | [`Bgr4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (B,G,R)                          | `bgr4_byte`                     | —                 |
-//! | [`Rgb4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (R,G,B)                              | `rgb4`                          | —                 |
-//! | [`Bgr4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (B,G,R)                              | `bgr4`                          | —                 |
+//! | [`Rgb444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (R,G,B)                            | `rgb444le`                      | 4                 |
+//! | [`Bgr444`]                      | 4         | 4:4:4       | packed u16, 4-bit pad (B,G,R)                            | `bgr444le`                      | 4                 |
+//! | [`Rgb555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (R,G,B)                            | `rgb555le`                      | 5                 |
+//! | [`Bgr555`]                      | 5         | 4:4:4       | packed u16, 1-bit pad (B,G,R)                            | `bgr555le`                      | 5                 |
+//! | [`Rgb565`]                      | 5/6/5     | 4:4:4       | packed u16 (R,G,B)                                       | `rgb565le`                      | 5/6/5             |
+//! | [`Bgr565`]                      | 5/6/5     | 4:4:4       | packed u16 (B,G,R)                                       | `bgr565le`                      | 5/6/5             |
+//! | [`Rgb8`]                        | 3/3/2     | 4:4:4       | packed byte (R,G,B)                                      | `rgb8`                          | 3/3/2             |
+//! | [`Bgr8`]                        | 2/3/3     | 4:4:4       | packed byte (B,G,R)                                      | `bgr8`                          | 3/3/2             |
+//! | [`Rgb4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (R,G,B)                          | `rgb4_byte`                     | 1/2/1             |
+//! | [`Bgr4Byte`]                    | 1/2/1     | 4:4:4       | packed byte, low nibble (B,G,R)                          | `bgr4_byte`                     | 1/2/1             |
+//! | [`Rgb4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (R,G,B)                              | `rgb4`                          | 1/2/1             |
+//! | [`Bgr4`]                        | 1/2/1     | 4:4:4       | bitstream, 2px/byte (B,G,R)                              | `bgr4`                          | 1/2/1             |
 //! | [`Rgbf16`]                      | 16f       | 4:4:4       | packed half-float triple (R,G,B)                         | `rgbf16`                        | 16 (full scale)   |
 //! | [`Rgbf32`]                      | 32f       | 4:4:4       | packed f32 triple (R,G,B)                                | `rgbf32`                        | 16 (full scale)   |
 //! | [`Rgbaf16`]                     | 16f       | 4:4:4       | packed half-float quadruple, source α                    | `rgbaf16le`                     | 16 (full scale)   |
@@ -232,12 +232,13 @@
 //!
 //! The last column is the depth of the source's packed `u16` RGB face — what
 //! [`Convert::rgb_u16`] and the sink tier's `with_rgb_u16` write — where it has
-//! one ([`RgbU16Source::RGB_U16_DEPTH`]). An integer source keeps its native
-//! depth, low-packed. "Full scale" is a face the source widens or narrows to
-//! the whole `u16` range (a palette, a 32-bit or float source, XYZ12). `—` has
-//! no `u16` face, and [`Convert::rgb_u16`] on it does not compile. The column
-//! is proved by `every_u16_face_source_implements_rgb_u16_source_at_its_depth`
-//! in the same module.
+//! one ([`RgbU16Source::RGB_U16_DEPTHS`]). An integer source keeps its native
+//! depth, low-packed; a legacy packed RGB source keeps each channel's own,
+//! given `R/G/B` where they differ ([`RgbDepths`]). "Full scale" is a face the
+//! source widens or narrows to the whole `u16` range (a palette, a 32-bit or
+//! float source, XYZ12). `—` has no `u16` face, and [`Convert::rgb_u16`] on it
+//! does not compile. A source whose sink tier has the face and whose `walker!`
+//! row does not state it does not build.
 //!
 //! [`Xyz12`](crate::source::Xyz12) is the **DCP / digital-cinema** source format. Decoding
 //! it requires a SMPTE ST 428-1 §8 inverse OETF, a 3x3 matrix to one
@@ -577,9 +578,10 @@ pub use walker::BayerOptions;
 pub use walker::{ColorSpec, Walker, YuvOptions};
 
 /// The Tier-0 golden entry point ([`Convert`]) and its sealed [`Source`] /
-/// [`FromSpec`] / [`RgbU16Source`] contract.
+/// [`FromSpec`] / [`RgbU16Source`] contract, with the [`RgbDepths`] the last
+/// states.
 #[cfg(any(feature = "std", feature = "alloc"))]
-pub use convert::{Convert, FromSpec, RgbU16Source, Source};
+pub use convert::{Convert, FromSpec, RgbDepths, RgbU16Source, Source};
 /// The canonical crate-level error name for the [`Convert`] tier — an alias of
 /// [`MixedSinkerError`](sinker::MixedSinkerError), which remains available under
 /// its original path.

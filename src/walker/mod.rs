@@ -451,6 +451,12 @@ macro_rules! walker {
   (@convert @rgb_u16($depth:literal) $marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!(@convert_plain [$depth] $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
   };
+  // `@rgb_u16(R, G, B)`: a face whose channels keep their own depths — the
+  // legacy packed RGB formats' — stated channel by channel, in the face's
+  // `R, G, B` order.
+  (@convert @rgb_u16($r:literal, $g:literal, $b:literal) $marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    walker!(@convert_plain [($r, $g, $b)] $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
+  };
   // Convert-tier rows: emit the plain-arm [`Walker`] impl *plus* the sealed
   // [`crate::convert::Source`] impl (frame -> marker -> options -> walker) and
   // its RGBA attach hook, so the frame decodes through the golden `Convert`
@@ -508,7 +514,7 @@ macro_rules! walker {
       walker!(@rgb_u16_slot $face; $marker);
     }
 
-    walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [] $frame<'_>);
+    walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [] $frame<'_>; $marker);
   };
   // Convert-tier `@const` rows: the endian-const variant of the `@convert` arm.
   // Delegates to the plain `@const` arm for the byte-identical [`Walker`] impl,
@@ -564,7 +570,7 @@ macro_rules! walker {
       walker!(@rgb_u16_slot $face; $marker);
     }
 
-    walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [const $c: $cty] $frame<'_, $c>);
+    walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [const $c: $cty] $frame<'_, $c>; $marker);
   };
   // Convert-tier `@const` rows whose per-format sink impls are generic over the
   // resampler `R` only under an *extra* cfg (`$src_cfg`) narrower than the row's
@@ -623,7 +629,7 @@ macro_rules! walker {
       walker!(@rgb_u16_slot $face; $marker);
     }
 
-    walker!(@rgb_u16_source $face; all(any(feature = "std", feature = "alloc"), $src_cfg); [const $c: $cty] $frame<'_, $c>);
+    walker!(@rgb_u16_source $face; all(any(feature = "std", feature = "alloc"), $src_cfg); [const $c: $cty] $frame<'_, $c>; $marker);
   };
   // Convert-tier `@const_bits` rows: the high-bit variant of the `@convert`
   // arm. Delegates to the plain `@const_bits` arm for the byte-identical
@@ -677,7 +683,7 @@ macro_rules! walker {
       walker!(@rgb_u16_slot $bits; $marker<$be>);
     }
 
-    walker!(@rgb_u16_source $bits; any(feature = "std", feature = "alloc"); [const $be: bool] $frame<'_, $bits, $be>);
+    walker!(@rgb_u16_source $bits; any(feature = "std", feature = "alloc"); [const $be: bool] $frame<'_, $bits, $be>; $marker<$be>);
   };
   // The `u16` RGB slot of a `Source` impl: the uninhabited `Infallible` where
   // the row has no face — so `Convert::rgb_u16` cannot have reached it and the
@@ -697,7 +703,7 @@ macro_rules! walker {
       match slot {}
     }
   };
-  (@rgb_u16_slot $depth:literal; $marker:ty) => {
+  (@rgb_u16_slot $face:tt; $marker:ty) => {
     type RgbU16Slot<'b> = &'b mut [u16];
 
     #[inline]
@@ -712,13 +718,41 @@ macro_rules! walker {
       Ok(())
     }
   };
-  // The row's `RgbU16Source` impl, which states its depth: none for a faceless
-  // row; under the same gate as its `Source` impl for a row with the face.
-  (@rgb_u16_source none; $gate:meta; [$($generics:tt)*] $frame:ty) => {};
-  (@rgb_u16_source $depth:literal; $gate:meta; [$($generics:tt)*] $frame:ty) => {
+  // The row's `RgbU16Source` impl, which states its depths, under the same gate
+  // as its `Source` impl. A row that states no face has none, and instead calls
+  // the face's two methods on its sink with an uninhabited argument: where the
+  // sink has the face, its own methods take the call and refuse the argument,
+  // so the row does not build (`convert::FacelessSink`). The census of the face
+  // is the table itself.
+  (@rgb_u16_source none; $gate:meta; [$($generics:tt)*] $frame:ty; $marker:ty) => {
+    #[cfg($gate)]
+    const _: () = {
+      #[allow(dead_code)]
+      fn faceless<R: $crate::resample::Resampler, $($generics)*>(
+        mut sink: $crate::sinker::MixedSinker<'_, $marker, R>,
+        faceless: $crate::convert::Faceless,
+      ) {
+        use $crate::convert::FacelessSink as _;
+        sink.set_rgb_u16(faceless);
+        let _ = sink.with_rgb_u16(faceless);
+      }
+    };
+  };
+  (@rgb_u16_source ($r:literal, $g:literal, $b:literal); $gate:meta; [$($generics:tt)*] $frame:ty; $marker:ty) => {
     #[cfg($gate)]
     impl<$($generics)*> $crate::convert::RgbU16Source for $frame {
-      const RGB_U16_DEPTH: u32 = $depth;
+      const RGB_U16_DEPTHS: $crate::convert::RgbDepths = $crate::convert::RgbDepths::new($r, $g, $b);
+
+      #[inline]
+      fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_> {
+        buf
+      }
+    }
+  };
+  (@rgb_u16_source $depth:literal; $gate:meta; [$($generics:tt)*] $frame:ty; $marker:ty) => {
+    #[cfg($gate)]
+    impl<$($generics)*> $crate::convert::RgbU16Source for $frame {
+      const RGB_U16_DEPTHS: $crate::convert::RgbDepths = $crate::convert::RgbDepths::splat($depth);
 
       #[inline]
       fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_> {
@@ -2042,9 +2076,11 @@ walker!(@convert @rgb_u16(16) @const(cfg: any(feature = "rgb", feature = "yuv-pl
   |src, opts, sink| rgbaf32_to_endian::<_, BE>(src, opts.full_range(), sink));
 
 // ---- Legacy packed RGB (byte-order-fixed LE; plain arm) ----------------
+// The `u16` face keeps each channel's native width: 5 for 555, 4 for 444, and
+// 5/6/5 for 565, channel by channel.
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(5, 6, 5)
   Rgb565,
   Rgb565Sink,
   Rgb565Frame,
@@ -2053,7 +2089,7 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(5, 6, 5)
   Bgr565,
   Bgr565Sink,
   Bgr565Frame,
@@ -2062,7 +2098,7 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(5)
   Rgb555,
   Rgb555Sink,
   Rgb555Frame,
@@ -2071,7 +2107,7 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(5)
   Bgr555,
   Bgr555Sink,
   Bgr555Frame,
@@ -2080,7 +2116,7 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(4)
   Rgb444,
   Rgb444Sink,
   Rgb444Frame,
@@ -2089,7 +2125,7 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(4)
   Bgr444,
   Bgr444Sink,
   Bgr444Frame,
@@ -2100,20 +2136,21 @@ walker!(@convert
 // ---- Legacy bit-packed RGB (8bpp 3:3:2 + 1:2:1; 4bpp 1:2:1) ------------
 // One byte per pixel (Rgb8 / Bgr8 / Rgb4Byte / Bgr4Byte) or two pixels per
 // byte (Rgb4 / Bgr4). No byte-order axis (sub-byte / single-byte), so each
-// rides the plain arm and reuses [`YuvOptions`].
+// rides the plain arm and reuses [`YuvOptions`]. The `u16` face keeps each
+// channel's native width: 3/3/2 and 1/2/1, channel by channel.
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert Rgb8, Rgb8Sink, Rgb8Frame, YuvOptions, |src, opts, sink| {
+walker!(@convert @rgb_u16(3, 3, 2) Rgb8, Rgb8Sink, Rgb8Frame, YuvOptions, |src, opts, sink| {
   rgb8_to(src, opts.full_range(), sink)
 });
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert Bgr8, Bgr8Sink, Bgr8Frame, YuvOptions, |src, opts, sink| {
+walker!(@convert @rgb_u16(3, 3, 2) Bgr8, Bgr8Sink, Bgr8Frame, YuvOptions, |src, opts, sink| {
   bgr8_to(src, opts.full_range(), sink)
 });
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(1, 2, 1)
   Rgb4Byte,
   Rgb4ByteSink,
   Rgb4ByteFrame,
@@ -2122,7 +2159,7 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert
+walker!(@convert @rgb_u16(1, 2, 1)
   Bgr4Byte,
   Bgr4ByteSink,
   Bgr4ByteFrame,
@@ -2131,12 +2168,12 @@ walker!(@convert
 );
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert Rgb4, Rgb4Sink, Rgb4Frame, YuvOptions, |src, opts, sink| {
+walker!(@convert @rgb_u16(1, 2, 1) Rgb4, Rgb4Sink, Rgb4Frame, YuvOptions, |src, opts, sink| {
   rgb4_to(src, opts.full_range(), sink)
 });
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
-walker!(@convert Bgr4, Bgr4Sink, Bgr4Frame, YuvOptions, |src, opts, sink| {
+walker!(@convert @rgb_u16(1, 2, 1) Bgr4, Bgr4Sink, Bgr4Frame, YuvOptions, |src, opts, sink| {
   bgr4_to(src, opts.full_range(), sink)
 });
 

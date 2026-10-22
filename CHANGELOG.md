@@ -12,6 +12,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
+## 0.7.2 — unreleased
+
+Additive: the `Convert` tier writes the `u16` RGB face, so a 10- or 12-bit
+picture can be decoded, and mapped from HDR, at the precision it has. No
+existing API changes shape or behavior.
+
+### Added
+
+- **`Convert::rgb_u16` and `RgbU16Source`.** Until now `Convert`'s only RGB
+  face was 8-bit, and the `u16` face was on the sink tier alone
+  (`MixedSinker::with_rgb_u16`, per format). A PQ or HLG picture at 10 or 12
+  bits therefore lost its precision before `hdr::SdrMapping` saw it, and its
+  dark gradients banded.
+  - `rgb_u16` attaches a packed `u16` RGB buffer and writes the sink tier's
+    face, byte for byte, at native size and through `resize` / `resize_with`.
+    It combines with every other output.
+  - `RgbU16Source::RGB_U16_DEPTHS` states the face's depth on each channel,
+    an `RgbDepths`: every sample of a channel lies in
+    `0..=(1 << depth) - 1`. `RgbDepths::uniform` is the one depth where the
+    three agree, which is the `bits` that `SdrMapping::map_rgb16` takes.
+  - `RgbDepths`: `new(red, green, blue)`, `splat(depth)`, `red()`,
+    `green()`, `blue()` and `uniform()`.
+- **The face mirrors the sink tier exactly.** It covers all 107 source formats
+  whose sink has `with_rgb_u16`:
+  - an integer source at its native depth, low-packed (a P010 picture's
+    samples in `0..=1023`);
+  - 16 for a face widened or narrowed to the full `u16` range: `Pal8`, the
+    32-bit integer and float formats, and XYZ12;
+  - 8 for the 1-bit and 8-bit gray sources;
+  - each channel's own width for the twelve legacy packed RGB formats, as
+    their sinks write it, unexpanded: 5 (`Rgb555`, `Bgr555`), 4 (`Rgb444`,
+    `Bgr444`), and channel by channel 5/6/5 (`Rgb565`, `Bgr565`), 3/3/2
+    (`Rgb8`, `Bgr8`) and 1/2/1 (`Rgb4`, `Bgr4`, `Rgb4Byte`, `Bgr4Byte`). For
+    these eight `uniform()` is `None`.
+
+  An 8-bit YUV, RGB, YUVA or GBR source has no `u16` face. `rgb_u16` on it
+  does not compile, as `with_rgb_u16` does not on its sink. The crate docs'
+  format table gains the depth as a column.
+- **No new kernels.** `Convert` forwards to the sink tier's face. It holds the
+  buffer as a plain borrow, so the builder stays covariant in its lifetime, as
+  in 0.7.1: a builder borrowed for longer is still one borrowed for less. Only
+  `RgbU16Source`'s setter writes the buffer, and a hidden attach on the sealed
+  `Source` hands it to the sink tier's `set_rgb_u16`. The builder's type does
+  not change, so a caller can attach the face conditionally.
+
+### Internal
+
+- **The walker table states each depth once, beside its row.** A
+  `@const_bits` row's depth is its own `BITS`. Every other row with the face
+  carries `@rgb_u16(DEPTH)`, or `@rgb_u16(R, G, B)` where its channels differ.
+- **The table is the face's census, by construction.** A row that states no
+  face calls its sink's `set_rgb_u16` and `with_rgb_u16` with an uninhabited
+  argument. Where the sink has the face, its own methods take the call and
+  refuse the argument, so a row that leaves out the face its sink has does not
+  build.
+- **Laws** (`src/convert/rgb_u16_tests.rs`):
+  - parity with the hand-assembled sink for one source of every walker arm and
+    face family, and for each of the twelve legacy packed RGB formats, at
+    native size, area-resized and Lanczos-3-resized;
+  - each family's depth, with white at full depth, and each legacy format's
+    depth channel by channel;
+  - each legacy face's stated depths, and `uniform()` `None` for exactly the
+    eight whose channels differ;
+  - SIMD against the scalar reference at every width from 1 to 72;
+  - BT.2020 goldens at 10 and 12 bits, limited and full range, each held within
+    one code of an `f64` reference;
+  - a 10-bit PQ ramp that keeps more distinct SDR codes through the native
+    face than through the 8-bit one;
+  - the builder's covariance: a `Convert` borrowed for longer shortens to one
+    borrowed for less, for a source with the face and for one without, by an
+    ordinary function compiled into every build.
+
 ## 0.7.1 — 2026-10-15
 
 Additive: a public, analysis-grade HDR → SDR tier, and the BT.2100 curves it

@@ -12,7 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
-## 0.7.2 — unreleased
+## 0.7.2 — 2026-10-22
 
 Additive: the `Convert` tier writes the `u16` RGB face, so a 10- or 12-bit
 picture can be decoded, and mapped from HDR, at the precision it has. No

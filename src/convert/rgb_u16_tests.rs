@@ -1444,3 +1444,47 @@ fn a_10_bit_pq_ramp_keeps_more_sdr_codes_through_the_native_face() {
 /// The distinct SDR codes the 264-code ramp keeps: 77 through the 8-bit face,
 /// 170 through the native one.
 const BANDING_COUNTS: (usize, usize) = (77, 170);
+
+// ---- variance: the builder shortens its lifetime, as 0.7.1's did -------------
+
+/// [`Convert`] borrowed for longer is a builder borrowed for less, for a source
+/// with the `u16` face and for one without (`convert_is_covariant` and
+/// `faced_and_faceless_convert_shorten`, compiled into every build), and the
+/// shortened builders run.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn a_builder_borrowed_for_longer_is_one_borrowed_for_less() {
+  let (w, h) = (4u32, 2u32);
+  // Limited-range white: 10-bit for the face, 8-bit for the faceless source.
+  let (y10, uv10) = (le(&[940; 8]), le(&[512; 2]));
+  let faced_frame = crate::frame::Yuv420p10Frame::new(&y10, &uv10, &uv10, w, h, w, w / 2, w / 2);
+  let (y8, uv8) = ([235u8; 8], [128u8; 2]);
+  let faceless_frame = crate::frame::Yuv420pFrame::new(&y8, &uv8, &uv8, w, h, w, w / 2, w / 2);
+  let mut rgb_u16 = [0u16; 4 * 2 * 3];
+  let mut rgb = [0u8; 4 * 2 * 3];
+  {
+    let faced = Convert::from(&faced_frame)
+      .spec(ColorSpec::resolve(
+        PixelFormat::Yuv420p10Le,
+        DynamicRange::Limited,
+        ColorMatrix::Bt2020Ncl,
+      ))
+      .rgb_u16(&mut rgb_u16);
+    let faceless = Convert::from(&faceless_frame)
+      .spec(ColorSpec::resolve(
+        PixelFormat::Yuv420p,
+        DynamicRange::Limited,
+        ColorMatrix::Bt709,
+      ))
+      .rgb(&mut rgb);
+    let (faced, faceless) = super::faced_and_faceless_convert_shorten(faced, faceless);
+    let (faced, faceless) = (
+      super::convert_is_covariant(faced),
+      super::convert_is_covariant(faceless),
+    );
+    faced.run().expect("the faced builder runs");
+    faceless.run().expect("the faceless builder runs");
+  }
+  assert!(rgb_u16.iter().all(|&sample| sample == 1023), "{rgb_u16:?}");
+  assert!(rgb.iter().all(|&sample| sample == 255), "{rgb:?}");
+}

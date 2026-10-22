@@ -218,22 +218,16 @@ pub trait Source: sealed::Sealed {
   where
     R: Resampler;
 
-  /// What [`Convert::rgb_u16`]'s buffer is held as on this source: the buffer
-  /// itself where the source has a `u16` RGB face ([`RgbU16Source`]), and the
-  /// uninhabited [`Infallible`](core::convert::Infallible) where it has none.
-  /// A faceless source can therefore never hold one, and
-  /// [`attach_rgb_u16`](Self::attach_rgb_u16) has no case to refuse.
-  #[doc(hidden)]
-  type RgbU16Slot<'b>;
-
-  /// Attaches the `u16` RGB buffer [`Convert::rgb_u16`] was handed to `sink`
-  /// — the sink tier's `set_rgb_u16` where the face exists, and an empty
-  /// `match` where the slot cannot hold one. Called by [`Convert::run`] only
-  /// when [`Convert::rgb_u16`] was set.
+  /// Attaches the `u16` RGB buffer [`Convert::rgb_u16`] was handed to `sink`:
+  /// the sink tier's `set_rgb_u16`, on a source with the face
+  /// ([`RgbU16Source`]). [`Convert`] holds such a buffer only through that
+  /// trait's setter, so on a source without the face this is never called,
+  /// and it attaches nothing: the source's sink has no face to attach to.
+  /// Called by [`Convert::run`] only when [`Convert::rgb_u16`] was set.
   #[doc(hidden)]
   fn attach_rgb_u16<'sink, R>(
     sink: &mut MixedSinker<'sink, Self::Marker, R>,
-    slot: Self::RgbU16Slot<'sink>,
+    buf: &'sink mut [u16],
   ) -> Result<(), MixedSinkerError>
   where
     R: Resampler;
@@ -334,10 +328,6 @@ impl RgbDepths {
 pub trait RgbU16Source: Source {
   /// The bit depth of each channel of the face.
   const RGB_U16_DEPTHS: RgbDepths;
-
-  /// `buf` as this source's [`RgbU16Slot`](Source::RgbU16Slot).
-  #[doc(hidden)]
-  fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_>;
 }
 
 /// The golden one-call decode builder — Tier 0 of pixon's API.
@@ -379,9 +369,11 @@ pub struct Convert<'a, Fr: Source, R = NoopResampler> {
   rgb: Option<&'a mut [u8]>,
   rgba: Option<&'a mut [u8]>,
   luma: Option<&'a mut [u8]>,
-  /// The `u16` RGB buffer, held as the source's slot: `None` for every source
-  /// without the face, because its slot type has no value.
-  rgb_u16: Option<Fr::RgbU16Slot<'a>>,
+  /// The `u16` RGB buffer. A plain borrow, so the builder stays covariant in
+  /// `'a`, as in 0.7.1: a field naming `'a` through a projection of `Fr` would
+  /// make it invariant ([`convert_is_covariant`]). Only [`RgbU16Source`]'s
+  /// setter writes it, so it is `None` for every source without the face.
+  rgb_u16: Option<&'a mut [u16]>,
   // HSV, the siting-aware chroma tweaks, the ST 428 toggle, and the native
   // fast-tier flag are all sink knobs gated to the source families whose sink
   // exposes them. PR-A implements [`Source`] only for the planar-YUV proof
@@ -432,6 +424,32 @@ impl<'a, Fr: Source> From<&'a Fr> for Convert<'a, Fr, NoopResampler> {
       target_gamut: None,
     }
   }
+}
+
+/// [`Convert`] is covariant in its lifetime, as it was in 0.7.1: a builder
+/// borrowed for longer is one borrowed for less. A field whose type named `'a`
+/// through a projection of `Fr` would make the builder invariant in it, and this
+/// would not build, for every source, a faceless one among them. Compiled into
+/// every build; `rgb_u16_tests` runs it.
+#[allow(dead_code)]
+pub(crate) fn convert_is_covariant<'short, 'long: 'short, Fr: Source + 'long, R>(
+  convert: Convert<'long, Fr, R>,
+) -> Convert<'short, Fr, R> {
+  convert
+}
+
+/// [`convert_is_covariant`] by name, for a source with the `u16` face and one
+/// without.
+#[cfg(all(feature = "yuv-planar", any(feature = "std", feature = "alloc")))]
+#[allow(dead_code)]
+pub(crate) fn faced_and_faceless_convert_shorten<'short, 'long: 'short, 'frame: 'long>(
+  faced: Convert<'long, crate::frame::Yuv420p10Frame<'frame>>,
+  faceless: Convert<'long, crate::frame::Yuv420pFrame<'frame>>,
+) -> (
+  Convert<'short, crate::frame::Yuv420p10Frame<'frame>>,
+  Convert<'short, crate::frame::Yuv420pFrame<'frame>>,
+) {
+  (faced, faceless)
 }
 
 impl<'a, Fr: Source, R> Convert<'a, Fr, R> {
@@ -607,7 +625,7 @@ impl<'a, Fr: RgbU16Source, R> Convert<'a, Fr, R> {
   #[must_use]
   #[inline]
   pub fn rgb_u16(mut self, buf: &'a mut [u16]) -> Self {
-    self.rgb_u16 = Some(Fr::rgb_u16_slot(buf));
+    self.rgb_u16 = Some(buf);
     self
   }
 }
@@ -692,8 +710,8 @@ impl<Fr: Source, R: Resampler> Convert<'_, Fr, R> {
     if let Some(buf) = self.rgba {
       Fr::attach_rgba(&mut sink, buf)?;
     }
-    if let Some(slot) = self.rgb_u16 {
-      Fr::attach_rgb_u16(&mut sink, slot)?;
+    if let Some(buf) = self.rgb_u16 {
+      Fr::attach_rgb_u16(&mut sink, buf)?;
     }
 
     sink.set_simd(self.simd);

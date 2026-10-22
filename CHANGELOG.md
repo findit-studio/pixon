@@ -50,11 +50,12 @@ existing API changes shape or behavior.
   An 8-bit YUV, RGB, YUVA or GBR source has no `u16` face. `rgb_u16` on it
   does not compile, as `with_rgb_u16` does not on its sink. The crate docs'
   format table gains the depth as a column.
-- **No new kernels.** `Convert` forwards to the sink tier's face. A hidden slot
-  on the sealed `Source` holds the buffer as the face's own type where it
-  exists, and as an uninhabited one where it does not. So `run` attaches it
-  with no runtime refusal, and the builder's type does not change: a caller
-  can attach the face conditionally.
+- **No new kernels.** `Convert` forwards to the sink tier's face. It holds the
+  buffer as a plain borrow, so the builder stays covariant in its lifetime, as
+  in 0.7.1: a builder borrowed for longer is still one borrowed for less. Only
+  `RgbU16Source`'s setter writes the buffer, and a hidden attach on the sealed
+  `Source` hands it to the sink tier's `set_rgb_u16`. The builder's type does
+  not change, so a caller can attach the face conditionally.
 
 ### Internal
 
@@ -78,7 +79,10 @@ existing API changes shape or behavior.
   - BT.2020 goldens at 10 and 12 bits, limited and full range, each held within
     one code of an `f64` reference;
   - a 10-bit PQ ramp that keeps more distinct SDR codes through the native
-    face than through the 8-bit one.
+    face than through the 8-bit one;
+  - the builder's covariance: a `Convert` borrowed for longer shortens to one
+    borrowed for less, for a source with the face and for one without, by an
+    ordinary function compiled into every build.
 
 ## 0.7.1 — 2026-10-15
 

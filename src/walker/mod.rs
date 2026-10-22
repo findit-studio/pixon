@@ -439,8 +439,8 @@ macro_rules! walker {
   };
   // Convert-tier rows with a `u16` RGB face — `@rgb_u16(DEPTH)` right after
   // `@convert`, the depth its sink tier's `with_rgb_u16` writes at. Each forwards
-  // to the row's own arm below with the face in place of the faceless slot, so
-  // the depth is stated once, beside its row. (`@` cannot begin a type, so the
+  // to the row's own arm below with the face in place of `none`, so the depth
+  // is stated once, beside its row. (`@` cannot begin a type, so the
   // plain arm's `$marker:ty` never tries to parse the sentinel.)
   (@convert @rgb_u16($depth:literal) @const(cfg: $src_cfg:meta) $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!(@convert_const_cfg [$depth] $src_cfg; $c: $cty; $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
@@ -466,7 +466,8 @@ macro_rules! walker {
   // format's per-format sink implements its sink trait for every `R` (the
   // blanket `impl<R> …Sink for MixedSinker<'_, $marker, R>`), so the direct
   // `{fmt}_to` body type-checks for all `R` with no extra bound. A row without
-  // `@rgb_u16(…)` has no `u16` RGB face: its slot is uninhabited.
+  // `@rgb_u16(…)` has no `u16` RGB face: it attaches nothing, and its census
+  // probe stops the build where its sink has the face.
   (@convert $marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
     walker!(@convert_plain [none] $marker, $sink, $frame, $opts, |$s, $o, $k| $body);
   };
@@ -511,7 +512,7 @@ macro_rules! walker {
         Ok(())
       }
 
-      walker!(@rgb_u16_slot $face; $marker);
+      walker!(@rgb_u16_attach $face; $marker);
     }
 
     walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [] $frame<'_>; $marker);
@@ -567,7 +568,7 @@ macro_rules! walker {
         Ok(())
       }
 
-      walker!(@rgb_u16_slot $face; $marker);
+      walker!(@rgb_u16_attach $face; $marker);
     }
 
     walker!(@rgb_u16_source $face; any(feature = "std", feature = "alloc"); [const $c: $cty] $frame<'_, $c>; $marker);
@@ -626,7 +627,7 @@ macro_rules! walker {
         Ok(())
       }
 
-      walker!(@rgb_u16_slot $face; $marker);
+      walker!(@rgb_u16_attach $face; $marker);
     }
 
     walker!(@rgb_u16_source $face; all(any(feature = "std", feature = "alloc"), $src_cfg); [const $c: $cty] $frame<'_, $c>; $marker);
@@ -680,41 +681,37 @@ macro_rules! walker {
         Ok(())
       }
 
-      walker!(@rgb_u16_slot $bits; $marker<$be>);
+      walker!(@rgb_u16_attach $bits; $marker<$be>);
     }
 
     walker!(@rgb_u16_source $bits; any(feature = "std", feature = "alloc"); [const $be: bool] $frame<'_, $bits, $be>; $marker<$be>);
   };
-  // The `u16` RGB slot of a `Source` impl: the uninhabited `Infallible` where
-  // the row has no face — so `Convert::rgb_u16` cannot have reached it and the
-  // attach is an empty `match` — and the buffer itself where it has one, handed
-  // to the sink tier's `set_rgb_u16`.
-  (@rgb_u16_slot none; $marker:ty) => {
-    type RgbU16Slot<'b> = ::core::convert::Infallible;
-
+  // The `u16` RGB attach of a `Source` impl: the sink tier's `set_rgb_u16`
+  // where the row has the face. Where it has none, `Convert` never holds the
+  // buffer — only `RgbU16Source`'s setter writes it — and the row's sink has no
+  // face to attach it to, so it attaches nothing.
+  (@rgb_u16_attach none; $marker:ty) => {
     #[inline]
     fn attach_rgb_u16<'sink, R>(
       _sink: &mut $crate::sinker::MixedSinker<'sink, $marker, R>,
-      slot: Self::RgbU16Slot<'sink>,
+      _buf: &'sink mut [u16],
     ) -> Result<(), $crate::sinker::MixedSinkerError>
     where
       R: $crate::resample::Resampler,
     {
-      match slot {}
+      Ok(())
     }
   };
-  (@rgb_u16_slot $face:tt; $marker:ty) => {
-    type RgbU16Slot<'b> = &'b mut [u16];
-
+  (@rgb_u16_attach $face:tt; $marker:ty) => {
     #[inline]
     fn attach_rgb_u16<'sink, R>(
       sink: &mut $crate::sinker::MixedSinker<'sink, $marker, R>,
-      slot: Self::RgbU16Slot<'sink>,
+      buf: &'sink mut [u16],
     ) -> Result<(), $crate::sinker::MixedSinkerError>
     where
       R: $crate::resample::Resampler,
     {
-      sink.set_rgb_u16(slot)?;
+      sink.set_rgb_u16(buf)?;
       Ok(())
     }
   };
@@ -742,22 +739,12 @@ macro_rules! walker {
     #[cfg($gate)]
     impl<$($generics)*> $crate::convert::RgbU16Source for $frame {
       const RGB_U16_DEPTHS: $crate::convert::RgbDepths = $crate::convert::RgbDepths::new($r, $g, $b);
-
-      #[inline]
-      fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_> {
-        buf
-      }
     }
   };
   (@rgb_u16_source $depth:literal; $gate:meta; [$($generics:tt)*] $frame:ty; $marker:ty) => {
     #[cfg($gate)]
     impl<$($generics)*> $crate::convert::RgbU16Source for $frame {
       const RGB_U16_DEPTHS: $crate::convert::RgbDepths = $crate::convert::RgbDepths::splat($depth);
-
-      #[inline]
-      fn rgb_u16_slot(buf: &mut [u16]) -> Self::RgbU16Slot<'_> {
-        buf
-      }
     }
   };
   (@const $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {

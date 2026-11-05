@@ -12,6 +12,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/spec/v2.0.0.html); pre-1.0
 breaking changes bump the `x` in `0.x.y`.
 
+## 0.8.0 — 2026-11-05
+
+**Breaking**, on one count: the public dependency `mediaframe` crosses
+0.12 → 0.13, and with it the `smol-bytes` beneath it crosses 0.1 → 0.2.
+No pixon-authored API changes shape or behavior in this release.
+
+### Changed
+
+- **`mediaframe` 0.12 → 0.13.** One upstream major, entirely mediaframe's
+  own 0.13.0, whose source is 0.12.0's: the release is its `smol-bytes`
+  0.1 → 0.2 pin. It is breaking here because mediaframe's types are
+  pixon's public API, so a caller holding a `mediaframe` 0.12 value no
+  longer type-checks against this release. They are reached where 0.7.0
+  lists them: the crate root's re-exports and the `frame` and `source`
+  modules, `raw`'s Bayer and PAL8 types, `sinker::mixed`'s re-exports, and
+  pixon's own signatures over those types.
+- **`smol-bytes` 0.1 → 0.2, one level down.** pixon names no `smol-bytes`
+  item itself. The one `smol-bytes` type its API reaches is
+  `smol_bytes::Utf8Bytes`, the payload of the `Other(...)` escape on the
+  open vocabularies it re-exports (`PixelFormat` and the `color`
+  vocabulary among them), present where mediaframe's `alloc` is on.
+
+The lock resolves one `mediaframe` (0.13.0), one `mediatime` (0.5.1) and
+one `smol-bytes` (0.2.1). No source line moved.
+
 ## 0.7.2 — 2026-10-22
 
 Additive: the `Convert` tier writes the `u16` RGB face, so a 10- or 12-bit
